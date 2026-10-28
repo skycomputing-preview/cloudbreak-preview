@@ -1,0 +1,25 @@
+# Preview-only override for the vendored deploy/compose.tier2.yml (which
+# stays byte-identical to united-clouds/cloudbreak): publish every port on
+# loopback only.
+#
+# The stack runs dev-session auth (AUTH_MODE=dev: `x-dev-user: sysadmin` is a
+# system-admin session), and Cloudflare Access guards only the tunnel's
+# hostname. A port published on every interface would let anything that can
+# reach the host skip Access. cloudflared runs on the host network and
+# reaches the gateway at http://localhost:80; the smoke uses loopback too.
+#
+# `!override` replaces the vendored list instead of appending to it.
+services:
+  temporal:
+    ports: !override
+      - "127.0.0.1:7233:7233"
+      - "127.0.0.1:8233:8233"
+  real-core:
+    ports: !override
+      - "127.0.0.1:7443:7443"
+  bff:
+    ports: !override
+      - "127.0.0.1:8080:8080"
+  gateway:
+    ports: !override
+      - "127.0.0.1:${CB_UI_PORT:-5173}:80"

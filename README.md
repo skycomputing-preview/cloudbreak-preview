@@ -54,6 +54,11 @@ Each tunnel is remotely managed. Set these in the Cloudflare dashboard:
   `cloudflared` runs on the runner's host network. Compose publishes its
   Traefik gateway on port 80; on k3s, the bundled Traefik's load balancer
   binds port 80.
+
+The tunnel is the only way in. Compose publishes every port on loopback only
+(`deploy/compose.preview.yml`, and the job checks Docker's bindings). On k3s,
+the job drops new inbound 80/443 on the runner's network interface. Nothing
+reaches the stack without passing Cloudflare Access.
 - **Cloudflare Access application** covering the whole hostname, with a
   policy for your collaborators.
 
@@ -87,7 +92,8 @@ Workflow logs and artifacts here are public:
 ## Vendored files
 
 These files are copied byte for byte from the private `united-clouds/cloudbreak`
-repo. The commit they came from is in `deploy/SOURCE`.
+repo. Preview-only changes go in separate files, such as
+`deploy/compose.preview.yml`, which the sync leaves alone. The commit they came from is in `deploy/SOURCE`.
 
 | Path | |
 |---|---|
