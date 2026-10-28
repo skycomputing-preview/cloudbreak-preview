@@ -1,0 +1,12 @@
+apiVersion: v2
+name: cloudbreak
+description: >-
+  The Tier-2 stack on Kubernetes from the PUBLISHED images
+  (.github/workflows/images.yml): real-core (migrate + seed as init
+  containers) over Postgres and the Temporal dev server, the stub phase worker,
+  the BFF and the SPA behind a Gateway API HTTPRoute, plus Zitadel (+ its Postgres) as
+  plain dev-values Deployments — NOT their production charts. The same stack as
+  deploy/compose.tier2.yml; .github/workflows/smoke.yml installs it on k3s.
+type: application
+version: 0.3.0
+appVersion: tier2

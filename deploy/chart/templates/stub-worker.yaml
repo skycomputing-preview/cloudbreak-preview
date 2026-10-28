@@ -1,0 +1,32 @@
+# The seam's reference worker on all four family queues — what
+# `cb:up --tier 2` and compose.tier2.yml run by default.
+# TEMPORAL_TASK_QUEUE(S) is left unset on purpose: unset means all four. No
+# HTTP surface; real-core's /readyz is what proves it polls.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stub-worker
+  labels: { app: stub-worker }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: stub-worker }
+  template:
+    metadata:
+      labels: { app: stub-worker }
+    spec:
+      {{- with .Values.images.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        {{- include "cloudbreak.waitTemporal" . | nindent 8 }}
+      containers:
+        - name: stub-worker
+          {{- include "cloudbreak.image" (list $ "stub-worker") | nindent 10 }}
+          env:
+            - name: TEMPORAL_ADDRESS
+              value: temporal:7233
+            - name: TEMPORAL_NAMESPACE
+              value: default
+            - name: STUB_STEP_MS
+              value: {{ .Values.stubWorker.stepMs | quote }}

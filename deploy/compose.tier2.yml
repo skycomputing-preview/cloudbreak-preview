@@ -1,0 +1,231 @@
+# Tier 2 from PUBLISHED IMAGES — no checkout, no pnpm, no local build.
+# The same stack `pnpm cb:up --tier 2` boots from source (Temporal + Postgres,
+# migrate + seed worlds/acme.yaml, the stub phase worker, real-core, BFF, SPA),
+# behind a Traefik gateway routing exactly as deploy/chart's HTTPRoute does,
+# with every CloudBreak process running from the images that
+# .github/workflows/images.yml publishes to GHCR. Self-contained on purpose:
+# this one file is all an operator needs to download.
+#
+#   echo "$GHCR_TOKEN" | docker login ghcr.io -u <github-user> --password-stdin   # packages are private
+#   export CB_CORE_SECRET=$(openssl rand -base64 32)
+#   docker compose -f compose.tier2.yml up -d --wait --pull always   # `main` moves; don't run a stale cache
+#   open http://localhost:5173
+#   docker compose -f compose.tier2.yml down -v      # reset: the world lives in the postgres volume
+#
+# Knobs (all optional except CB_CORE_SECRET):
+#   CB_IMAGE_TAG       which build to run: main (default), sha-<commit>, pr-<n>, a dispatch
+#                      tag (dev-<timestamp> or a typed one), or a release tag
+#   CB_IMAGE_REGISTRY  default ghcr.io/united-clouds/cloudbreak
+#   CB_UI_PORT         host port for the gateway (the SPA's origin), default 5173
+#   STUB_STEP_MS       the stub worker's pacing, default 250
+#
+# Dev-session auth only (AUTH_MODE=dev): personas are picked in the SPA. The
+# oidc path still needs the Zitadel provisioner from a checkout
+# (deploy/zitadel/README.md).
+#
+# Not deploy/compose.dev.yml: that file is the source-tier's infrastructure
+# (real-core/test/compose-shape.test.ts pins its shape), and this one adds the
+# CloudBreak services on top. The temporal + postgres blocks below mirror it —
+# change both together — except that postgres keeps its data in a named volume
+# here (`down` keeps the world, `down -v` resets it) and publishes no host port.
+
+x-cb-images:
+  real-core: &real-core-image ${CB_IMAGE_REGISTRY:-ghcr.io/united-clouds/cloudbreak}/real-core:${CB_IMAGE_TAG:-main}
+
+x-core-env: &core-env
+  # The BFF-core bearer secret: the SAME value on both, at least 32 bytes.
+  # `:-` and not `:?` for compose.dev.yml's reason: compose interpolates the
+  # whole file for EVERY command, so `:?` would also break `logs` and
+  # `down -v` in a shell without it. Unset, real-core and the BFF refuse to
+  # start and say why (`docker compose logs real-core`).
+  CORE_SHARED_SECRET: ${CB_CORE_SECRET:-}
+
+# The gateway's routes — the same table as deploy/chart/templates/gateway.yaml
+# (change both together): `/api` prefix-stripped, `/events` and the oidc
+# navigations → bff, everything else → the SPA. real-core, Temporal and
+# Postgres get no route (AGENTS.md single-seam rule). Inline, so this file
+# stays the one download. Traefik streams text/event-stream unbuffered with no
+# idle cut, so /events needs no extra config.
+configs:
+  gateway-routes:
+    content: |
+      http:
+        routers:
+          api:
+            # `/api` as a whole path segment, like the HTTPRoute's PathPrefix
+            # (Traefik's PathPrefix alone is a string prefix: /apix).
+            rule: "Path(`/api`) || PathPrefix(`/api/`)"
+            middlewares: [strip-api]
+            service: bff
+          bff:
+            rule: "Path(`/events`) || Path(`/login`) || Path(`/callback`) || Path(`/logout`)"
+            service: bff
+          spa:
+            rule: "PathPrefix(`/`)"
+            service: frontend
+        middlewares:
+          strip-api:
+            stripPrefix:
+              prefixes: ["/api"]
+        services:
+          bff:
+            loadBalancer:
+              servers: [{ url: "http://bff:8080" }]
+          frontend:
+            loadBalancer:
+              servers: [{ url: "http://frontend:80" }]
+
+name: cloudbreak-tier2
+
+services:
+  temporal:
+    image: temporalio/temporal:1.8.0
+    command: ["server", "start-dev", "--ip", "0.0.0.0", "--dynamic-config-value", "frontend.namespaceCount=4000"]
+    ports:
+      - "7233:7233" # gRPC frontend — where an external phase worker attaches
+      - "8233:8233" # Temporal Web UI
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  postgres:
+    image: postgres:17.5-alpine
+    environment:
+      POSTGRES_USER: cloudbreak
+      POSTGRES_PASSWORD: cloudbreak
+      POSTGRES_DB: cloudbreak
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cloudbreak -d cloudbreak"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  # The two operator verbs, as one-shot containers of the real-core image.
+  # Both are idempotent, so `up` on an existing volume re-runs them harmlessly.
+  migrate:
+    image: *real-core-image
+    command: ["./node_modules/.bin/node-pg-migrate", "-m", "migrations", "up"]
+    environment:
+      DATABASE_URL: postgres://cloudbreak:cloudbreak@postgres:5432/cloudbreak
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  seed:
+    image: *real-core-image
+    command: ["./node_modules/.bin/tsx", "scripts/seed.ts"]
+    environment:
+      DATABASE_URL: postgres://cloudbreak:cloudbreak@postgres:5432/cloudbreak
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  # The seam's reference worker on all four family queues (edition 3.1) — what
+  # `cb:up --tier 2` runs by default. TEMPORAL_TASK_QUEUE(S) is left unset on
+  # purpose: unset means all four.
+  stub-worker:
+    image: ${CB_IMAGE_REGISTRY:-ghcr.io/united-clouds/cloudbreak}/stub-worker:${CB_IMAGE_TAG:-main}
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      STUB_STEP_MS: ${STUB_STEP_MS:-250}
+    depends_on:
+      temporal:
+        condition: service_healthy
+    restart: unless-stopped
+
+  real-core:
+    image: *real-core-image
+    environment:
+      <<: *core-env
+      PORT: "7443"
+      DATABASE_URL: postgres://cloudbreak:cloudbreak@postgres:5432/cloudbreak
+      TEMPORAL_ADDRESS: temporal:7233
+      WORKER_EXPECTED: stub
+    ports:
+      - "7443:7443"
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_healthy
+      stub-worker:
+        condition: service_started
+    healthcheck:
+      # The slim node image has no curl; node's own fetch is the probe.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7443/readyz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 36
+      start_period: 10s
+    restart: unless-stopped
+
+  bff:
+    image: ${CB_IMAGE_REGISTRY:-ghcr.io/united-clouds/cloudbreak}/bff:${CB_IMAGE_TAG:-main}
+    environment:
+      <<: *core-env
+      PORT: "8080"
+      CORE_ADDR: http://real-core:7443
+      AUTH_MODE: dev
+    ports:
+      - "8080:8080"
+    depends_on:
+      real-core:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/readyz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+    restart: unless-stopped
+
+  frontend:
+    image: ${CB_IMAGE_REGISTRY:-ghcr.io/united-clouds/cloudbreak}/frontend:${CB_IMAGE_TAG:-main}
+    environment:
+      BFF_ADDR: http://bff:8080
+    depends_on:
+      bff:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  # The browser's one door: the same Traefik release k3s v1.36.5 bundles.
+  # Routes live in the `gateway-routes` config above.
+  gateway:
+    image: traefik:v3.7.13
+    command:
+      - --entrypoints.web.address=:80
+      # Drop request headers whose names alias another (X_Dev_User for
+      # X-Dev-User): Traefik's own advice for entry points it fronts.
+      - --entrypoints.web.http.aliasheadersstrategy=delete
+      - --providers.file.filename=/etc/traefik/routes.yml
+      - --ping=true
+      - --global.sendanonymoususage=false
+      - --global.checknewversion=false
+    configs:
+      - source: gateway-routes
+        target: /etc/traefik/routes.yml
+    ports:
+      - "${CB_UI_PORT:-5173}:80"
+    depends_on:
+      frontend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  pgdata:

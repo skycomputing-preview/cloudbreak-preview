@@ -1,0 +1,41 @@
+# Temporal dev server as a plain dev-values Deployment (NOT the production
+# chart — T13 spec). Self-contained persistence, same image as compose.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal
+  labels: { app: temporal }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: temporal }
+  template:
+    metadata:
+      labels: { app: temporal }
+    spec:
+      containers:
+        - name: temporal
+          image: {{ .Values.images.temporal }}
+          args: ["server", "start-dev", "--ip", "0.0.0.0"]
+          ports:
+            - containerPort: 7233 # gRPC frontend
+            - containerPort: 8233 # Temporal Web UI (debugging)
+          readinessProbe:
+            exec:
+              command: ["temporal", "operator", "cluster", "health"]
+            periodSeconds: 5
+            failureThreshold: 12
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal
+spec:
+  selector: { app: temporal }
+  ports:
+    - name: grpc
+      port: 7233
+      targetPort: 7233
+    - name: ui
+      port: 8233
+      targetPort: 8233

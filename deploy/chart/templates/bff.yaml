@@ -1,0 +1,53 @@
+# The BFF — the browser's single seam (env surface: bff/README.md).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bff
+  labels: { app: bff }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: bff }
+  template:
+    metadata:
+      labels: { app: bff }
+    spec:
+      {{- with .Values.images.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: bff
+          {{- include "cloudbreak.image" (list $ "bff") | nindent 10 }}
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: CORE_ADDR
+              value: http://real-core:7443
+            - name: CORE_SHARED_SECRET # W4-H-5: the one Secret both pods read
+              valueFrom:
+                secretKeyRef: { name: cloudbreak-core-secret, key: CORE_SHARED_SECRET }
+            - name: AUTH_MODE
+              value: {{ .Values.bff.authMode | quote }}
+            - name: DEV_USER
+              value: {{ .Values.bff.devUser | quote }}
+            - name: SSE_HEARTBEAT_MS
+              value: {{ .Values.bff.sseHeartbeatMs | quote }}
+            - name: DEDUPE_TTL_MS
+              value: {{ .Values.bff.dedupeTtlMs | quote }}
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+          readinessProbe:
+            # ready = upstream core reachable
+            httpGet: { path: /readyz, port: 8080 }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bff
+spec:
+  selector: { app: bff }
+  ports:
+    - port: 8080
+      targetPort: 8080

@@ -1,0 +1,50 @@
+# real-core's Postgres (the stores + outbox), same image and credentials as
+# deploy/compose.tier2.yml. emptyDir: the world lives as long as this pod —
+# real-core's init containers re-migrate and re-seed on its next start, but a
+# postgres restart under a running core loses the world (dev values only).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  labels: { app: postgres }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: postgres }
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.images.postgres }}
+          env:
+            - name: POSTGRES_USER
+              value: cloudbreak
+            - name: POSTGRES_PASSWORD
+              value: cloudbreak
+            - name: POSTGRES_DB
+              value: cloudbreak
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "cloudbreak", "-d", "cloudbreak"]
+            periodSeconds: 5
+            failureThreshold: 12
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector: { app: postgres }
+  ports:
+    - port: 5432
+      targetPort: 5432

@@ -1,0 +1,422 @@
+# Smoke the PUBLISHED CloudBreak images (ghcr.io/united-clouds/cloudbreak,
+# private) the two ways an operator runs them, then keep each stack up behind
+# a Cloudflare Tunnel so collaborators can try the UI:
+#
+#   compose  deploy/compose.tier2.yml on the runner's docker (Traefik gateway)
+#   k3s      deploy/chart on a single-node k3s, its bundled Traefik serving the
+#            chart's Gateway API Gateway + HTTPRoute
+#
+# Both run the same smoke (.github/scripts/tier2-smoke.sh). Only a stack that
+# passed it is exposed: cloudflared connects the job's tunnel, the job checks
+# that Cloudflare Access answers in front of the public URL (it refuses to
+# expose an open URL), holds the stack for `hold_minutes` (default 60), then
+# tears everything down. Cancel the run to end a preview early.
+#
+# Ported from united-clouds/cloudbreak's .github/workflows/smoke.yml; the
+# deploy files are vendored from there (README.md: "Vendored files"). The S6
+# demo arcs need that repo's source and stay there.
+#
+# Nightly and on manual dispatch only. A newer run of a job replaces the one
+# holding its tunnel (one stack per tunnel, or Cloudflare would balance
+# collaborators across two).
+name: preview
+
+on:
+  schedule:
+    - cron: "13 5 * * *" # nightly, after the private repo's smoke (04:43)
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag: main, sha-<commit>, pr-<n>, a dispatch tag or a release"
+        type: string
+        required: false
+        default: main
+      target:
+        description: "Which stack(s) to smoke and preview"
+        type: choice
+        options: [both, compose, k3s]
+        default: both
+      hold_minutes:
+        description: "Minutes to keep each stack up for collaborators after the smoke (0 = smoke only, max 300)"
+        type: number
+        default: 60
+
+permissions:
+  contents: read
+
+env:
+  CB_IMAGE_REGISTRY: ${{ vars.CB_IMAGE_REGISTRY || 'ghcr.io/united-clouds/cloudbreak' }}
+  CB_IMAGE_TAG: ${{ inputs.tag || 'main' }}
+  CLOUDFLARED_IMAGE: cloudflare/cloudflared:2026.10.0
+
+jobs:
+  # Settles the hold time and which jobs run, and reports which secrets are
+  # set as booleans: no secret value leaves this job.
+  plan:
+    if: github.repository == 'skycomputing-preview/cloudbreak-preview'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      hold: ${{ steps.plan.outputs.hold }}
+      compose: ${{ steps.plan.outputs.compose }}
+      k3s: ${{ steps.plan.outputs.k3s }}
+      dc_tunnel: ${{ steps.plan.outputs.dc_tunnel }}
+      k3s_tunnel: ${{ steps.plan.outputs.k3s_tunnel }}
+    steps:
+      - id: plan
+        shell: bash
+        env:
+          INPUT_HOLD: ${{ inputs.hold_minutes }} # empty on the schedule
+          VAR_HOLD: ${{ vars.CB_PREVIEW_HOLD_MINUTES }}
+          TARGET: ${{ inputs.target || 'both' }}
+          PKG_PAT: ${{ secrets.CB_PREVIEW_PKG_PAT }}
+          DC_TT: ${{ secrets.CB_PREVIEW_CF_DC_TT }}
+          DC_URL: ${{ secrets.CB_PREVIEW_CF_DC_URL }}
+          K3S_TT: ${{ secrets.CB_PREVIEW_CF_K3S_TT }}
+          K3S_URL: ${{ secrets.CB_PREVIEW_CF_K3S_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PKG_PAT" ]; then
+            echo "::error::secret CB_PREVIEW_PKG_PAT is not set: the images are private and cannot be pulled"
+            exit 1
+          fi
+          hold="${INPUT_HOLD:-${VAR_HOLD:-60}}"
+          if ! [[ "$hold" =~ ^[0-9]+$ ]] || [ "$hold" -gt 300 ]; then
+            echo "::error::hold_minutes must be a whole number from 0 to 300 (got '$hold')"
+            exit 1
+          fi
+          set_flag() { [ -n "$1" ] && [ -n "$2" ] && echo true || echo false; }
+          dc_tunnel=$(set_flag "$DC_TT" "$DC_URL")
+          k3s_tunnel=$(set_flag "$K3S_TT" "$K3S_URL")
+          {
+            echo "hold=$hold"
+            echo "compose=$([ "$TARGET" != k3s ] && echo true || echo false)"
+            echo "k3s=$([ "$TARGET" != compose ] && echo true || echo false)"
+            echo "dc_tunnel=$dc_tunnel"
+            echo "k3s_tunnel=$k3s_tunnel"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Preview plan"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Images | \`$CB_IMAGE_REGISTRY/*:$CB_IMAGE_TAG\` |"
+            echo "| Stacks | $TARGET |"
+            echo "| Hold | $hold min after the smoke |"
+            echo "| Tunnels configured | compose: $dc_tunnel, k3s: $k3s_tunnel |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  compose:
+    name: compose (tier 2 from published images)
+    needs: plan
+    if: needs.plan.outputs.compose == 'true'
+    runs-on: ubuntu-24.04
+    # The GitHub-hosted maximum: the hold step bounds itself, and every step
+    # before it carries its own timeout.
+    timeout-minutes: 360
+    concurrency:
+      group: preview-compose
+      cancel-in-progress: true
+    env:
+      COMPOSE: docker compose -f deploy/compose.tier2.yml
+      CB_UI_PORT: "80" # the tunnel's origin: http://localhost:80
+      HOLD: ${{ needs.plan.outputs.hold }}
+      EXPOSE: ${{ needs.plan.outputs.hold != '0' && needs.plan.outputs.dc_tunnel == 'true' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            deploy
+            .github/scripts
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ vars.CB_PREVIEW_PKG_USER || github.repository_owner }}
+          password: ${{ secrets.CB_PREVIEW_PKG_PAT }}
+      - name: mint the BFF-core secret
+        run: |
+          secret="$(openssl rand -base64 32)"
+          echo "::add-mask::$secret"
+          echo "CB_CORE_SECRET=$secret" >> "$GITHUB_ENV"
+
+      - name: pull the published images (${{ env.CB_IMAGE_TAG }})
+        timeout-minutes: 15
+        run: $COMPOSE pull --quiet
+      - name: image sizes (pulled, unpacked)
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### Pulled images — \`$CB_IMAGE_TAG\` (linux/amd64, unpacked on disk)"
+            echo
+            echo "| Image | Commit | Size |"
+            echo "|---|---|---:|"
+            total=0
+            for image in real-core bff stub-worker frontend; do
+              ref="$CB_IMAGE_REGISTRY/$image:$CB_IMAGE_TAG"
+              size="$(docker image inspect -f '{{.Size}}' "$ref")"
+              rev="$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$ref")"
+              total=$((total + size))
+              echo "| $image | \`${rev:0:7}\` | $(awk -v b="$size" 'BEGIN{printf "%.1f MB", b/1e6}') |"
+            done
+            echo "| **total** | | **$(awk -v b="$total" 'BEGIN{printf "%.1f MB", b/1e6}')** |"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: boot — compose up --wait
+        timeout-minutes: 10
+        run: $COMPOSE up -d --wait --pull never
+      - name: status
+        if: always()
+        run: $COMPOSE ps -a
+
+      - name: smoke — every hop answers through the Traefik gateway
+        timeout-minutes: 5
+        env:
+          UI_URL: http://localhost
+          CORE_URL: http://127.0.0.1:7443
+          BFF_URL: http://127.0.0.1:8080
+        run: .github/scripts/tier2-smoke.sh
+
+      - name: expose — Cloudflare Tunnel behind Access
+        if: env.EXPOSE == 'true'
+        timeout-minutes: 5
+        env:
+          TUNNEL_TOKEN: ${{ secrets.CB_PREVIEW_CF_DC_TT }}
+          PREVIEW_URL: ${{ secrets.CB_PREVIEW_CF_DC_URL }}
+        run: .github/scripts/preview-tunnel.sh up
+      - name: not exposed
+        if: env.EXPOSE != 'true'
+        run: |
+          echo "::notice::compose preview not exposed: hold is $HOLD min, tunnel configured: ${{ needs.plan.outputs.dc_tunnel }} (needs CB_PREVIEW_CF_DC_TT and CB_PREVIEW_CF_DC_URL)"
+      - name: hold — the preview is live (cancel the run to stop early)
+        if: env.EXPOSE == 'true'
+        timeout-minutes: 330
+        env:
+          HEALTH_URL: http://localhost/api/healthz
+        run: |
+          echo "### compose preview: up for $HOLD min at the URL in CB_PREVIEW_CF_DC_URL (behind Cloudflare Access)" >> "$GITHUB_STEP_SUMMARY"
+          .github/scripts/preview-tunnel.sh hold "$HOLD"
+
+      # Logs and artifacts of a public repo are public: app logs are kept only
+      # when the job fails, for 3 days.
+      - name: collect compose logs (on failure)
+        if: failure()
+        run: $COMPOSE logs --no-color --timestamps > tier2-compose.log 2>&1 || true
+      - name: upload logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: preview-compose-logs
+          retention-days: 3
+          if-no-files-found: ignore
+          path: |
+            tier2-compose.log
+            core-readyz.json
+            session.json
+            shell.html
+      - name: tear down
+        if: always()
+        run: |
+          .github/scripts/preview-tunnel.sh down
+          $COMPOSE down -v
+
+  # The chart on a real cluster: k3s with its bundled Traefik as the Gateway
+  # API controller (deploy/k3s/traefik-gateway.yaml turns the provider on).
+  # k3s's service load balancer binds Traefik's LoadBalancer Service to the
+  # runner's port 80: the browser seam, and the tunnel's origin.
+  k3s:
+    name: k3s (helm chart from published images)
+    needs: plan
+    if: needs.plan.outputs.k3s == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360 # as compose: the hold bounds itself
+    concurrency:
+      group: preview-k3s
+      cancel-in-progress: true
+    env:
+      K3S_VERSION: v1.36.5+k3s1 # bundles Traefik 3.7.13 + Gateway API v1.6.1 CRDs
+      KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      NS: cloudbreak
+      HOLD: ${{ needs.plan.outputs.hold }}
+      EXPOSE: ${{ needs.plan.outputs.hold != '0' && needs.plan.outputs.k3s_tunnel == 'true' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            deploy
+            .github/scripts
+
+      - name: k3s ${{ env.K3S_VERSION }}
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Before the first start, so Traefik deploys with its Gateway
+          # provider on.
+          sudo install -D -m 0644 deploy/k3s/traefik-gateway.yaml \
+            /var/lib/rancher/k3s/server/manifests/traefik-gateway.yaml
+          # The installer pinned to the same release tag as the binary it installs.
+          curl -sfL "https://raw.githubusercontent.com/k3s-io/k3s/${K3S_VERSION/+/%2B}/install.sh" \
+            | INSTALL_K3S_VERSION="$K3S_VERSION" \
+              INSTALL_K3S_EXEC="server --disable=metrics-server --write-kubeconfig-mode=644" sh -
+          for _ in $(seq 60); do
+            kubectl get nodes 2>/dev/null | grep -q ' Ready ' && break
+            sleep 2
+          done
+          kubectl get nodes -o wide
+          kubectl wait --for=condition=Ready node --all --timeout=60s
+
+      - name: Traefik with the Gateway API provider
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          # k3s deploys Traefik through a helm-install job, so the Deployment
+          # appears a while after the node is Ready.
+          for _ in $(seq 90); do
+            kubectl -n kube-system get deployment/traefik >/dev/null 2>&1 && break
+            sleep 2
+          done
+          kubectl -n kube-system rollout status deployment/traefik --timeout=300s
+          kubectl wait --for=condition=Accepted gatewayclass/traefik --timeout=120s
+          kubectl get gatewayclass traefik -o wide
+
+      - name: namespace + GHCR pull secret
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.CB_PREVIEW_PKG_PAT }}
+          GHCR_USER: ${{ vars.CB_PREVIEW_PKG_USER || github.repository_owner }}
+        run: |
+          set -euo pipefail
+          kubectl create namespace "$NS"
+          kubectl -n "$NS" create secret docker-registry ghcr --docker-server=ghcr.io \
+            --docker-username="$GHCR_USER" --docker-password="$GHCR_TOKEN"
+
+      - name: helm install (${{ env.CB_IMAGE_TAG }})
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          # --set-string: a release tag like 1.2 must stay a string. Zitadel
+          # is off: nothing in the smoke talks to it.
+          helm upgrade --install cloudbreak deploy/chart --namespace "$NS" \
+            --set-string images.registry="$CB_IMAGE_REGISTRY" \
+            --set-string images.tag="$CB_IMAGE_TAG" \
+            --set 'images.pullSecrets[0].name=ghcr' \
+            --set zitadel.enabled=false \
+            --wait --timeout 10m
+          # Traefik took the Gateway (its listener matched the `web`
+          # entryPoint) and attached the route with every backend resolved.
+          kubectl -n "$NS" wait --for=condition=Programmed gateway/cloudbreak --timeout=120s
+          for c in Accepted ResolvedRefs; do
+            kubectl -n "$NS" wait httproute/cloudbreak --timeout=120s \
+              --for="jsonpath={.status.parents[0].conditions[?(@.type==\"$c\")].status}=True"
+          done
+      - name: status
+        if: always()
+        run: kubectl -n "$NS" get pods,svc,gateway,httproute -o wide
+      - name: images running
+        shell: bash
+        run: |
+          {
+            echo "### Running images — \`$CB_IMAGE_TAG\`"
+            echo
+            echo "| Container | Image ID |"
+            echo "|---|---|"
+            kubectl -n "$NS" get pods -o jsonpath='{range .items[*].status.containerStatuses[*]}| {.name} | `{.imageID}` |{"\n"}{end}'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: smoke — every hop answers through the Gateway
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Wait for the Gateway to serve BOTH backends: a controller learns
+          # a pod's endpoint a beat after the pod turns Ready and
+          # `helm --wait` returns, and the BFF is usually last. /api/healthz
+          # is the BFF's /healthz through the rewrite.
+          for _ in $(seq 60); do
+            curl -fsS -o /dev/null http://localhost/ && curl -fsS -o /dev/null http://localhost/api/healthz && break
+            sleep 2
+          done
+          # real-core and the BFF are not browser-reachable (single seam):
+          # reach their /readyz through the apiserver's service proxy.
+          kubectl proxy --port=8001 > kubectl-proxy.log 2>&1 &
+          proxy=$!
+          trap 'kill $proxy' EXIT
+          for _ in $(seq 30); do curl -fsS -o /dev/null http://127.0.0.1:8001/version && break; sleep 1; done
+          svc=http://127.0.0.1:8001/api/v1/namespaces/$NS/services
+          UI_URL=http://localhost CORE_URL="$svc/real-core:7443/proxy" BFF_URL="$svc/bff:8080/proxy" \
+            .github/scripts/tier2-smoke.sh
+
+      - name: expose — Cloudflare Tunnel behind Access
+        if: env.EXPOSE == 'true'
+        timeout-minutes: 5
+        env:
+          TUNNEL_TOKEN: ${{ secrets.CB_PREVIEW_CF_K3S_TT }}
+          PREVIEW_URL: ${{ secrets.CB_PREVIEW_CF_K3S_URL }}
+        run: .github/scripts/preview-tunnel.sh up
+      - name: not exposed
+        if: env.EXPOSE != 'true'
+        run: |
+          echo "::notice::k3s preview not exposed: hold is $HOLD min, tunnel configured: ${{ needs.plan.outputs.k3s_tunnel }} (needs CB_PREVIEW_CF_K3S_TT and CB_PREVIEW_CF_K3S_URL)"
+      - name: hold — the preview is live (cancel the run to stop early)
+        if: env.EXPOSE == 'true'
+        timeout-minutes: 330
+        env:
+          HEALTH_URL: http://localhost/api/healthz
+        run: |
+          echo "### k3s preview: up for $HOLD min at the URL in CB_PREVIEW_CF_K3S_URL (behind Cloudflare Access)" >> "$GITHUB_STEP_SUMMARY"
+          .github/scripts/preview-tunnel.sh hold "$HOLD"
+
+      # Public repo: diagnostics only when the job fails (log tails here,
+      # full logs as a 3-day artifact).
+      - name: pod logs (tail, on failure)
+        if: failure()
+        shell: bash
+        run: |
+          for d in real-core bff frontend stub-worker; do
+            echo "::group::$d"
+            kubectl -n "$NS" logs "deployment/$d" --all-containers --prefix --tail=60 || true
+            echo "::endgroup::"
+          done
+          echo "::group::traefik + gateway status"
+          kubectl -n kube-system logs deployment/traefik --tail=60 || true
+          kubectl -n "$NS" describe gateway/cloudbreak httproute/cloudbreak || true
+          echo "::endgroup::"
+          echo "::group::endpoints + events"
+          kubectl -n "$NS" get endpointslices,pods -o wide || true
+          kubectl -n "$NS" get events --sort-by=.lastTimestamp | tail -40 || true
+          echo "::endgroup::"
+      - name: collect cluster logs (on failure)
+        if: failure()
+        shell: bash
+        run: |
+          {
+            kubectl get nodes -o wide
+            kubectl get all,gatewayclass,gateway,httproute -A -o wide
+            kubectl -n "$NS" describe gateway/cloudbreak httproute/cloudbreak
+            kubectl get events -A --sort-by=.lastTimestamp
+            kubectl -n "$NS" describe pods
+          } > k3s-cluster.log 2>&1 || true
+          {
+            for pod in $(kubectl -n "$NS" get pods -o name); do
+              kubectl -n "$NS" logs "$pod" --all-containers --prefix --timestamps
+            done
+            kubectl -n kube-system logs deployment/traefik --timestamps
+          } > k3s-pods.log 2>&1 || true
+      - name: upload logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: preview-k3s-logs
+          retention-days: 3
+          if-no-files-found: ignore
+          path: |
+            k3s-cluster.log
+            k3s-pods.log
+            core-readyz.json
+            session.json
+            shell.html
+      - name: tear down the tunnel
+        if: always()
+        run: .github/scripts/preview-tunnel.sh down
