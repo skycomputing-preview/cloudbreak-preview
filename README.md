@@ -57,12 +57,17 @@ Each tunnel is remotely managed. Set these in the Cloudflare dashboard:
 - **Cloudflare Access application** covering the whole hostname, with a
   policy for your collaborators.
 
-The workflow **fails closed**. After `cloudflared` reports a live connection,
-the job requests `/` and `/api/healthz` on the public URL without
-credentials. It continues only if Cloudflare Access sends the request to its
-login page or refuses it (401/403). If either path answers with anything else,
-such as a 2xx (the hostname is open to the internet), the job stops and tears
-the stack down.
+The workflow **fails closed**:
+
+- **Before the stack starts.** The job starts `cloudflared` before anything
+  serves port 80, waits for a live connection, then requests `/` and
+  `/api/healthz` on the public URL without credentials. It continues only if
+  Cloudflare Access sends the request to its login page or refuses it
+  (401/403). Anything else stops the job before the stack is reachable: a
+  missing DNS record, an error page or a 2xx.
+- **During the hold.** The job repeats that check every minute. If the
+  hostname ever answers without Access, the preview ends at once and the
+  stack is torn down.
 
 Collaborators then sign in through Cloudflare Access and pick a persona in the
 SPA. The stacks run CloudBreak's dev-session auth (`AUTH_MODE=dev`): any

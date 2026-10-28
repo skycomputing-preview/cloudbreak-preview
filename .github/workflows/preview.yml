@@ -144,6 +144,17 @@ jobs:
           echo "::add-mask::$secret"
           echo "CB_CORE_SECRET=$secret" >> "$GITHUB_ENV"
 
+      # Runs before the stack serves port 80, the tunnel's origin (nothing
+      # listens there yet), so a hostname without Cloudflare Access is caught
+      # with nothing behind it to expose. The hold step keeps re-checking.
+      - name: tunnel — Cloudflare Access must answer before the stack starts
+        if: env.EXPOSE == 'true'
+        timeout-minutes: 5
+        env:
+          TUNNEL_TOKEN: ${{ secrets.CB_PREVIEW_CF_DC_TT }}
+          PREVIEW_URL: ${{ secrets.CB_PREVIEW_CF_DC_URL }}
+        run: .github/scripts/preview-tunnel.sh up
+
       - name: pull the published images (${{ env.CB_IMAGE_TAG }})
         timeout-minutes: 15
         run: $COMPOSE pull --quiet
@@ -181,13 +192,6 @@ jobs:
           BFF_URL: http://127.0.0.1:8080
         run: .github/scripts/tier2-smoke.sh
 
-      - name: expose — Cloudflare Tunnel behind Access
-        if: env.EXPOSE == 'true'
-        timeout-minutes: 5
-        env:
-          TUNNEL_TOKEN: ${{ secrets.CB_PREVIEW_CF_DC_TT }}
-          PREVIEW_URL: ${{ secrets.CB_PREVIEW_CF_DC_URL }}
-        run: .github/scripts/preview-tunnel.sh up
       - name: not exposed
         if: env.EXPOSE != 'true'
         run: |
@@ -197,6 +201,7 @@ jobs:
         timeout-minutes: 330
         env:
           HEALTH_URL: http://localhost/api/healthz
+          PREVIEW_URL: ${{ secrets.CB_PREVIEW_CF_DC_URL }}
         run: |
           echo "### compose preview: up for $HOLD min at the URL in CB_PREVIEW_CF_DC_URL (behind Cloudflare Access)" >> "$GITHUB_STEP_SUMMARY"
           .github/scripts/preview-tunnel.sh hold "$HOLD"
@@ -285,6 +290,18 @@ jobs:
           kubectl wait --for=condition=Accepted gatewayclass/traefik --timeout=120s
           kubectl get gatewayclass traefik -o wide
 
+      # Runs before the chart is installed, while port 80 (the tunnel's
+      # origin) gets only Traefik's 404, so a hostname without Cloudflare
+      # Access is caught with nothing behind it to expose. The hold step
+      # keeps re-checking.
+      - name: tunnel — Cloudflare Access must answer before the stack starts
+        if: env.EXPOSE == 'true'
+        timeout-minutes: 5
+        env:
+          TUNNEL_TOKEN: ${{ secrets.CB_PREVIEW_CF_K3S_TT }}
+          PREVIEW_URL: ${{ secrets.CB_PREVIEW_CF_K3S_URL }}
+        run: .github/scripts/preview-tunnel.sh up
+
       - name: namespace + GHCR pull secret
         shell: bash
         env:
@@ -353,13 +370,6 @@ jobs:
           UI_URL=http://localhost CORE_URL="$svc/real-core:7443/proxy" BFF_URL="$svc/bff:8080/proxy" \
             .github/scripts/tier2-smoke.sh
 
-      - name: expose — Cloudflare Tunnel behind Access
-        if: env.EXPOSE == 'true'
-        timeout-minutes: 5
-        env:
-          TUNNEL_TOKEN: ${{ secrets.CB_PREVIEW_CF_K3S_TT }}
-          PREVIEW_URL: ${{ secrets.CB_PREVIEW_CF_K3S_URL }}
-        run: .github/scripts/preview-tunnel.sh up
       - name: not exposed
         if: env.EXPOSE != 'true'
         run: |
@@ -369,6 +379,7 @@ jobs:
         timeout-minutes: 330
         env:
           HEALTH_URL: http://localhost/api/healthz
+          PREVIEW_URL: ${{ secrets.CB_PREVIEW_CF_K3S_URL }}
         run: |
           echo "### k3s preview: up for $HOLD min at the URL in CB_PREVIEW_CF_K3S_URL (behind Cloudflare Access)" >> "$GITHUB_STEP_SUMMARY"
           .github/scripts/preview-tunnel.sh hold "$HOLD"
