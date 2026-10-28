@@ -28,22 +28,35 @@ set -euo pipefail
 NAME=cb-preview-tunnel
 METRICS=127.0.0.1:20241
 
-mask_host() {
-  local host=${PREVIEW_URL#*://}
-  host=${host%%/*}
-  echo "::add-mask::$host"
+# Tolerate a pasted secret: stray whitespace, a missing scheme, a trailing
+# slash. Sets PREVIEW_URL (normalized) and PREVIEW_HOST, and masks the host.
+normalize_url() {
+  PREVIEW_URL=$(printf '%s' "$PREVIEW_URL" | tr -d '[:space:]')
+  [[ "$PREVIEW_URL" == *://* ]] || PREVIEW_URL="https://$PREVIEW_URL"
+  PREVIEW_URL=${PREVIEW_URL%/}
+  PREVIEW_HOST=${PREVIEW_URL#*://}
+  PREVIEW_HOST=${PREVIEW_HOST%%/*}
+  PREVIEW_HOST=${PREVIEW_HOST%%:*}
+  echo "::add-mask::$PREVIEW_HOST"
 }
 
 check_access() {
-  local base=${PREVIEW_URL%/} path code location
+  local path out code location
+  # A tunnel's DNS record exists only once the tunnel has a Public Hostname
+  # route in the Cloudflare dashboard; say so instead of "HTTP 000".
+  if ! getent hosts "$PREVIEW_HOST" >/dev/null; then
+    echo "::error::the preview hostname does not resolve. Give this tunnel a Public Hostname (service http://localhost:80) in the Cloudflare dashboard; that creates its DNS record"
+    exit 1
+  fi
   # FAIL CLOSED: the stack runs dev-session auth (any persona, no password),
   # so the URL must never answer without Cloudflare Access in front. An
   # unauthenticated request must be sent to the Access login (3xx to
   # *.cloudflareaccess.com or /cdn-cgi/access/) or refused (401/403); a 2xx
   # means the hostname is open to the internet, and the job stops here.
   for path in / /api/healthz; do
-    read -r code location < <(curl -sS -o /dev/null --max-time 20 \
-      -w '%{http_code} %{redirect_url}\n' "$base$path" || echo "000 -")
+    # curl still writes the -w line (000) when it fails to connect.
+    out=$(curl -sS -o /dev/null --max-time 20 -w '%{http_code} %{redirect_url}' "$PREVIEW_URL$path") || true
+    read -r code location <<<"$out"
     case "$code" in
       301 | 302 | 303 | 307 | 308)
         if [[ "$location" != *cloudflareaccess.com* && "$location" != */cdn-cgi/access/* ]]; then
@@ -68,7 +81,7 @@ check_access() {
 case "${1:-}" in
 up)
   : "${TUNNEL_TOKEN:?}" "${PREVIEW_URL:?}" "${CLOUDFLARED_IMAGE:?}"
-  mask_host
+  normalize_url
   # Host network: the dashboard's origin (http://localhost:80) is the runner.
   # Metrics on loopback only (cloudflared's default binds every interface).
   docker run -d --name "$NAME" --network host -e TUNNEL_TOKEN "$CLOUDFLARED_IMAGE" \
@@ -89,7 +102,7 @@ up)
 
 check-access)
   : "${PREVIEW_URL:?}"
-  mask_host
+  normalize_url
   check_access
   ;;
 
