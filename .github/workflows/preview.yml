@@ -94,6 +94,7 @@ jobs:
           DC_AUTH_URL: ${{ secrets.CB_PREVIEW_CF_DC_AUTH_URL }}
           K3S_AUTH_URL: ${{ secrets.CB_PREVIEW_CF_K3S_AUTH_URL }}
           OIDC_PASSWORD: ${{ secrets.CB_PREVIEW_OIDC_PASSWORD }}
+          ADMIN_PASSWORD: ${{ secrets.CB_PREVIEW_ADMIN_PASSWORD }}
         run: |
           set -euo pipefail
           if [ -z "$PKG_PAT" ]; then
@@ -129,6 +130,12 @@ jobs:
                 echo "::error::auth=oidc needs these secrets: ${missing[*]}"
                 exit 1
               fi
+              # The console admin is optional, but never on the personas'
+              # shared password: that would hand the console to everyone.
+              if [ -n "$ADMIN_PASSWORD" ] && [ "$ADMIN_PASSWORD" = "$OIDC_PASSWORD" ]; then
+                echo "::error::CB_PREVIEW_ADMIN_PASSWORD must differ from CB_PREVIEW_OIDC_PASSWORD"
+                exit 1
+              fi
               ;;
             *)
               echo "::error::auth must be dev or oidc (got '$AUTH')"
@@ -152,6 +159,9 @@ jobs:
             echo "| Stacks | $TARGET |"
             echo "| Hold | $hold min after the smoke |"
             echo "| Sign-in | $AUTH |"
+            if [ "$AUTH" = oidc ]; then
+              echo "| Zitadel console admin | $([ -n "$ADMIN_PASSWORD" ] && echo yes || echo no) |"
+            fi
             echo "| Tunnels configured | compose: $dc_tunnel, k3s: $k3s_tunnel |"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -266,6 +276,7 @@ jobs:
           APP_URL: ${{ secrets.CB_PREVIEW_CF_DC_URL }}
           AUTH_URL: ${{ secrets.CB_PREVIEW_CF_DC_AUTH_URL }}
           USER_PASSWORD: ${{ secrets.CB_PREVIEW_OIDC_PASSWORD }}
+          ADMIN_PASSWORD: ${{ secrets.CB_PREVIEW_ADMIN_PASSWORD }}
           REAL_CORE_IMAGE: ${{ env.CB_IMAGE_REGISTRY }}/real-core:${{ env.CB_IMAGE_TAG }}
         run: .github/scripts/preview-oidc.sh provision
       - name: "oidc: the BFF as the token-handler"
@@ -513,6 +524,7 @@ jobs:
           APP_URL: ${{ secrets.CB_PREVIEW_CF_K3S_URL }}
           AUTH_URL: ${{ secrets.CB_PREVIEW_CF_K3S_AUTH_URL }}
           USER_PASSWORD: ${{ secrets.CB_PREVIEW_OIDC_PASSWORD }}
+          ADMIN_PASSWORD: ${{ secrets.CB_PREVIEW_ADMIN_PASSWORD }}
           REAL_CORE_IMAGE: ${{ env.CB_IMAGE_REGISTRY }}/real-core:${{ env.CB_IMAGE_TAG }}
           GHCR_TOKEN: ${{ secrets.CB_PREVIEW_PKG_PAT }}
           GHCR_USER: ${{ vars.CB_PREVIEW_PKG_USER || github.repository_owner }}

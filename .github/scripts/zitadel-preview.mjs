@@ -12,9 +12,17 @@
 //    with a role grant on the cloudbreak project, i.e. a world-file user: any
 //    other human in the org (an admin Zitadel might create) keeps its own
 //    password, so the shared one never opens the console.
+// 3. Optionally, a Zitadel console admin (ADMIN_PASSWORD set): the human user
+//    ADMIN_LOGIN, an ORG_OWNER of acme, so a maintainer can create the IdP
+//    account and role grant that a user created in CloudBreak's Settings
+//    needs before it can sign in (the core rows and Zitadel are not synced).
+//    ORG_OWNER covers the org's users, grants and projects, not the instance.
+//    It has no cloudbreak grant, so it is no persona: the app refuses it, and
+//    USER_PASSWORD never reaches it.
 //
 // Env: ZITADEL_ISSUER (the auth URL), STATE_DIR (holds the provisioner's
-// PAT), APP_URL (the app's public base URL), USER_PASSWORD.
+// PAT), APP_URL (the app's public base URL), USER_PASSWORD, and optionally
+// ADMIN_PASSWORD.
 
 import { readFileSync } from "node:fs";
 
@@ -26,6 +34,8 @@ const env = (name) => {
 const ISSUER = env("ZITADEL_ISSUER").replace(/\/$/, "");
 const APP_URL = env("APP_URL").replace(/\/$/, "");
 const PASSWORD = env("USER_PASSWORD");
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? "";
+const ADMIN_LOGIN = "zitadel-admin@acme.example";
 const PAT = readFileSync(`${env("STATE_DIR").replace(/\/$/, "")}/pat`, "utf8").trim();
 
 async function api(path, { method = "GET", body } = {}) {
@@ -35,7 +45,11 @@ async function api(path, { method = "GET", body } = {}) {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(`${method} ${path}: HTTP ${res.status} ${text.slice(0, 300)}`);
+  if (!res.ok) {
+    throw Object.assign(new Error(`${method} ${path}: HTTP ${res.status} ${text.slice(0, 300)}`), {
+      status: res.status,
+    });
+  }
   return text ? JSON.parse(text) : {};
 }
 
@@ -110,6 +124,50 @@ async function setPersonaPasswords(projectId) {
   console.log(`${personas.length} personas: password set from CB_PREVIEW_OIDC_PASSWORD`);
 }
 
+async function ensureConsoleAdmin() {
+  const found = await api("/management/v1/users/_search", {
+    method: "POST",
+    body: {
+      queries: [{ userNameQuery: { userName: ADMIN_LOGIN, method: "TEXT_QUERY_METHOD_EQUALS" } }],
+    },
+  });
+  let userId = found.result?.[0]?.id;
+  if (userId) {
+    await api(`/management/v1/users/${userId}/password`, {
+      method: "POST",
+      body: { password: ADMIN_PASSWORD, noChangeRequired: true },
+    });
+  } else {
+    const created = await api("/management/v1/users/human/_import", {
+      method: "POST",
+      body: {
+        userName: ADMIN_LOGIN,
+        profile: { firstName: "Preview", lastName: "Admin", displayName: "Preview Admin" },
+        email: { email: ADMIN_LOGIN, isEmailVerified: true },
+        password: ADMIN_PASSWORD,
+        passwordChangeRequired: false,
+      },
+    });
+    userId = created.userId;
+  }
+  const member = { userId, roles: ["ORG_OWNER"] };
+  try {
+    await api("/management/v1/orgs/me/members", { method: "POST", body: member });
+  } catch (err) {
+    if (err.status !== 409) throw err;
+    await api(`/management/v1/orgs/me/members/${userId}`, { method: "PUT", body: member });
+  }
+  // The password signs in: a password-checked session, then dropped.
+  const session = await api("/v2/sessions", {
+    method: "POST",
+    body: { checks: { user: { loginName: ADMIN_LOGIN }, password: { password: ADMIN_PASSWORD } } },
+  });
+  await api(`/v2/sessions/${session.sessionId}`, { method: "DELETE", body: {} });
+  console.log(`console admin ${ADMIN_LOGIN}: ORG_OWNER, password from CB_PREVIEW_ADMIN_PASSWORD`);
+}
+
 const projectId = await findProjectId();
 await addRedirectUris(projectId);
 await setPersonaPasswords(projectId);
+if (ADMIN_PASSWORD) await ensureConsoleAdmin();
+else console.log("no CB_PREVIEW_ADMIN_PASSWORD: no console admin");

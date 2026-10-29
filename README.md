@@ -43,6 +43,7 @@ Actions → **preview** → Run workflow:
 | `CB_PREVIEW_CF_DC_AUTH_URL` | secret | `auth: oidc` only. Public base URL of the compose stack's Zitadel, e.g. `https://auth-dc.preview.example.com`. |
 | `CB_PREVIEW_CF_K3S_AUTH_URL` | secret | `auth: oidc` only. Public base URL of the k3s stack's Zitadel. |
 | `CB_PREVIEW_OIDC_PASSWORD` | secret | `auth: oidc` only. The password every persona gets (the world-file users only; no other Zitadel account). Share it with collaborators. Zitadel's default policy applies: at least 8 characters, with upper and lower case, a digit and a symbol. |
+| `CB_PREVIEW_ADMIN_PASSWORD` | secret | `auth: oidc`, optional. When set, Zitadel gets a console admin, `zitadel-admin@acme.example` (ORG_OWNER of `acme`), with this password. Give it only to maintainers who manage Zitadel accounts. It must differ from `CB_PREVIEW_OIDC_PASSWORD`, and the same policy applies. |
 | `CB_PREVIEW_HOLD_MINUTES` | variable | Optional. Hold time for the nightly run (default 60). |
 | `CB_PREVIEW_AUTH` | variable | Optional. Sign-in mode for the nightly run: `dev` (default) or `oidc`. |
 | `CB_IMAGE_REGISTRY` | variable | Optional. Default `ghcr.io/united-clouds/cloudbreak`. |
@@ -125,8 +126,19 @@ on `auth`:
   The auth hostname is public, while the app hostname stays behind Access.
   A Zitadel login alone does not reach the app: the callback and every API
   call go through the app hostname. Zitadel runs only for the hold, with a
-  masterkey minted per run; its admin is the provisioner's machine user,
-  whose token never leaves the runner.
+  masterkey minted per run. The provisioner's machine user administers it,
+  and its token never leaves the runner.
+
+  **Users created in Settings can't sign in on their own.** The Supervisor's
+  user management in Settings changes CloudBreak's user records only, not
+  Zitadel (united-clouds/cloudbreak#162). A user created there has no
+  Zitadel account, and a user whose role changed there is refused until
+  Zitadel's role grant matches. To test that flow end to end, set
+  `CB_PREVIEW_ADMIN_PASSWORD`. Then sign in to the Zitadel console (the auth
+  URL + `/ui/console`) as `zitadel-admin@acme.example`. There, create the
+  user with the same email, or change their grant on the `cloudbreak`
+  project to the matching role. The admin has no `cloudbreak` role, so the
+  app itself refuses it.
 
 ## This repo is public
 

@@ -17,6 +17,8 @@
 #   APP_URL          the app's public base URL (behind Cloudflare Access)
 #   AUTH_URL         the auth hostname's public base URL (Zitadel; no Access)
 #   USER_PASSWORD    every persona's password (provision only)
+#   ADMIN_PASSWORD   optional (provision only): set, a Zitadel console admin
+#                    (zitadel-admin@acme.example, ORG_OWNER) gets it
 #   REAL_CORE_IMAGE  the pulled real-core image: provision.mjs runs inside it,
 #                    beside the world file and the YAML parser it reads it with
 #
@@ -74,6 +76,14 @@ provision)
   : "${USER_PASSWORD:?}" "${REAL_CORE_IMAGE:?}"
   normalize APP_URL
   echo "::add-mask::$USER_PASSWORD"
+  ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+  if [ -n "$ADMIN_PASSWORD" ]; then
+    echo "::add-mask::$ADMIN_PASSWORD"
+    if [ "$ADMIN_PASSWORD" = "$USER_PASSWORD" ]; then
+      echo "::error::CB_PREVIEW_ADMIN_PASSWORD must differ from CB_PREVIEW_OIDC_PASSWORD"
+      exit 1
+    fi
+  fi
   "${ZITADEL[@]}" up -d --wait --no-recreate zitadel
 
   # The issuer must answer on its PUBLIC URL, unguarded: the BFF fetches
@@ -117,7 +127,10 @@ provision)
   # users; the fix-ups below run as the runner's.
   sudo chmod -R a+rX "$STATE"
   ZITADEL_ISSUER="$AUTH_URL" STATE_DIR="$STATE" APP_URL="$APP_URL" USER_PASSWORD="$USER_PASSWORD" \
-    node "$here/.github/scripts/zitadel-preview.mjs"
+    ADMIN_PASSWORD="$ADMIN_PASSWORD" node "$here/.github/scripts/zitadel-preview.mjs"
+  if [ -n "$ADMIN_PASSWORD" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    echo "Zitadel console: the auth URL + \`/ui/console\`, as \`zitadel-admin@acme.example\` (CB_PREVIEW_ADMIN_PASSWORD)" >> "$GITHUB_STEP_SUMMARY"
+  fi
 
   seal=$(openssl rand -base64 32)
   echo "::add-mask::$seal"
