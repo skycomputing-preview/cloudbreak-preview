@@ -6,9 +6,12 @@
 //
 // 1. The app's redirect URIs: the preview's `${APP_URL}/callback` and
 //    `${APP_URL}/` (post-logout) are ADDED to provision.mjs's localhost ones.
-// 2. Every human user's password: provision.mjs sets a fixed dev password,
-//    and this repo is public, so each persona gets USER_PASSWORD (a secret
-//    shared with collaborators) instead, with no forced change.
+// 2. The personas' password: provision.mjs sets a fixed dev password, and
+//    this repo is public, so each persona gets USER_PASSWORD (a secret shared
+//    with collaborators) instead, with no forced change. A persona is a user
+//    with a role grant on the cloudbreak project, i.e. a world-file user: any
+//    other human in the org (an admin Zitadel might create) keeps its own
+//    password, so the shared one never opens the console.
 //
 // Env: ZITADEL_ISSUER (the auth URL), STATE_DIR (holds the provisioner's
 // PAT), APP_URL (the app's public base URL), USER_PASSWORD.
@@ -58,13 +61,17 @@ const OIDC_CONFIG_FIELDS = [
   "backChannelLogoutUri",
 ];
 
-async function addRedirectUris() {
+async function findProjectId() {
   const projects = await api("/management/v1/projects/_search", {
     method: "POST",
     body: { queries: [byName("cloudbreak")] },
   });
   const projectId = projects.result?.[0]?.id;
   if (!projectId) throw new Error("project cloudbreak not found: did provision.mjs run?");
+  return projectId;
+}
+
+async function addRedirectUris(projectId) {
   const apps = await api(`/management/v1/projects/${projectId}/apps/_search`, {
     method: "POST",
     body: { queries: [byName("cloudbreak-bff")] },
@@ -87,21 +94,22 @@ async function addRedirectUris() {
   console.log(`app cloudbreak-bff: ${config.redirectUris.length} redirect URIs (preview added)`);
 }
 
-async function setPasswords() {
-  const users = await api("/management/v1/users/_search", {
+async function setPersonaPasswords(projectId) {
+  const grants = await api("/management/v1/users/grants/_search", {
     method: "POST",
-    body: { queries: [{ typeQuery: { type: "TYPE_HUMAN" } }] },
+    body: { queries: [{ projectIdQuery: { projectId } }] },
   });
-  const humans = users.result ?? [];
-  if (humans.length === 0) throw new Error("no human users: did provision.mjs run?");
-  for (const user of humans) {
-    await api(`/management/v1/users/${user.id}/password`, {
+  const personas = [...new Set((grants.result ?? []).map((g) => g.userId))];
+  if (personas.length === 0) throw new Error("no persona grants: did provision.mjs run?");
+  for (const userId of personas) {
+    await api(`/management/v1/users/${userId}/password`, {
       method: "POST",
       body: { password: PASSWORD, noChangeRequired: true },
     });
   }
-  console.log(`${humans.length} users: password set from CB_PREVIEW_OIDC_PASSWORD`);
+  console.log(`${personas.length} personas: password set from CB_PREVIEW_OIDC_PASSWORD`);
 }
 
-await addRedirectUris();
-await setPasswords();
+const projectId = await findProjectId();
+await addRedirectUris(projectId);
+await setPersonaPasswords(projectId);

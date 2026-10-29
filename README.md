@@ -42,7 +42,7 @@ Actions → **preview** → Run workflow:
 | `CB_PREVIEW_CF_K3S_URL` | secret | Public base URL of the k3s preview. |
 | `CB_PREVIEW_CF_DC_AUTH_URL` | secret | `auth: oidc` only. Public base URL of the compose stack's Zitadel, e.g. `https://auth-dc.preview.example.com`. |
 | `CB_PREVIEW_CF_K3S_AUTH_URL` | secret | `auth: oidc` only. Public base URL of the k3s stack's Zitadel. |
-| `CB_PREVIEW_OIDC_PASSWORD` | secret | `auth: oidc` only. The password every persona gets. Share it with collaborators. Zitadel's default policy applies: at least 8 characters, with upper and lower case, a digit and a symbol. |
+| `CB_PREVIEW_OIDC_PASSWORD` | secret | `auth: oidc` only. The password every persona gets (the world-file users only; no other Zitadel account). Share it with collaborators. Zitadel's default policy applies: at least 8 characters, with upper and lower case, a digit and a symbol. |
 | `CB_PREVIEW_HOLD_MINUTES` | variable | Optional. Hold time for the nightly run (default 60). |
 | `CB_PREVIEW_AUTH` | variable | Optional. Sign-in mode for the nightly run: `dev` (default) or `oidc`. |
 | `CB_IMAGE_REGISTRY` | variable | Optional. Default `ghcr.io/united-clouds/cloudbreak`. |
