@@ -264,20 +264,23 @@ jobs:
             deploy
             .github/scripts
 
-      # k3s's service load balancer opens Traefik's 80/443 on every host
-      # interface, and Cloudflare Access guards only the tunnel (which reaches
-      # Traefik on localhost). Drop new inbound 80/443 on the runner's own
-      # NIC before NAT; loopback and pod traffic (cni0) are untouched, and so
-      # are replies to the runner's outbound connections (destination port
-      # is ephemeral).
-      - name: inbound 80/443 on the runner's NIC dropped
+      # Cloudflare Access guards only the tunnel, which reaches Traefik on
+      # localhost. But Traefik's LoadBalancer Service is reachable on every
+      # host address: servicelb opens 80/443, and kube-proxy opens its
+      # NodePorts (30000-32767). Drop NEW inbound connections to those ports
+      # on the runner's own NIC, in mangle PREROUTING (after conntrack, before
+      # kube-proxy's and servicelb's DNAT). Loopback and pod traffic (cni0)
+      # are untouched, and so is every reply to the runner's own connections
+      # (ESTABLISHED, whatever its ephemeral port).
+      - name: inbound to Traefik's ports on the runner's NIC dropped
         shell: bash
         run: |
           set -euo pipefail
           nic="$(ip route show default | awk '{print $5; exit}')"
           for ipt in iptables ip6tables; do
-            sudo "$ipt" -t raw -I PREROUTING -i "$nic" -p tcp -m multiport --dports 80,443 -j DROP
-            sudo "$ipt" -t raw -S PREROUTING
+            sudo "$ipt" -t mangle -I PREROUTING -i "$nic" -p tcp \
+              -m conntrack --ctstate NEW -m multiport --dports 80,443,30000:32767 -j DROP
+            sudo "$ipt" -t mangle -S PREROUTING
           done
 
       - name: k3s ${{ env.K3S_VERSION }}
@@ -314,6 +317,15 @@ jobs:
           kubectl -n kube-system rollout status deployment/traefik --timeout=300s
           kubectl wait --for=condition=Accepted gatewayclass/traefik --timeout=120s
           kubectl get gatewayclass traefik -o wide
+          # The inbound drop above covers 80/443 and 30000-32767: Traefik's
+          # Service must not be reachable on any other host port.
+          kubectl -n kube-system get svc traefik -o wide
+          for p in $(kubectl -n kube-system get svc traefik -o jsonpath='{.spec.ports[*].nodePort}'); do
+            if ((p < 30000 || p > 32767)); then
+              echo "::error::Traefik NodePort $p is outside the range dropped on the NIC"
+              exit 1
+            fi
+          done
 
       # Runs before the chart is installed, while port 80 (the tunnel's
       # origin) gets only Traefik's 404, so a hostname without Cloudflare

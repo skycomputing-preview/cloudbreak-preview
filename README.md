@@ -54,13 +54,17 @@ Each tunnel is remotely managed. Set these in the Cloudflare dashboard:
   `cloudflared` runs on the runner's host network. Compose publishes its
   Traefik gateway on port 80; on k3s, the bundled Traefik's load balancer
   binds port 80.
-
-The tunnel is the only way in. Compose publishes every port on loopback only
-(`deploy/compose.preview.yml`, and the job checks Docker's bindings). On k3s,
-the job drops new inbound 80/443 on the runner's network interface. Nothing
-reaches the stack without passing Cloudflare Access.
 - **Cloudflare Access application** covering the whole hostname, with a
   policy for your collaborators.
+
+The tunnel is the only way in:
+
+- **Compose** publishes every port on loopback only
+  (`deploy/compose.preview.yml`), and the job checks Docker's bindings.
+- **k3s:** the job drops new inbound connections on the runner's network
+  interface to Traefik's ports: 80, 443 and the NodePort range 30000–32767.
+
+Nothing reaches the stack without passing Cloudflare Access.
 
 The workflow **fails closed**:
 
