@@ -28,6 +28,10 @@
 name: preview
 
 on:
+  # TEMP: prove both jobs on this PR (a workflow can't be dispatched before
+  # it is on main). Dropped before merge.
+  pull_request:
+    paths: [".github/workflows/preview.yml"]
   schedule:
     - cron: "13 5 * * *" # nightly, after the private repo's smoke (04:43)
   workflow_dispatch:
