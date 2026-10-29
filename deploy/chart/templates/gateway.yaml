@@ -1,0 +1,77 @@
+# The single seam through a REAL proxy (exit criteria #6/#7), on the Gateway
+# API (gateway.networking.k8s.io/v1) — Ingress is frozen upstream and
+# ingress-nginx is retired. `/` → frontend; `/api` (prefix stripped, mirrors
+# the Vite dev proxy), `/events` and the oidc navigations `/login` `/callback`
+# `/logout` → bff — and nothing else (AGENTS.md single-seam rule). real-core,
+# Temporal and Postgres have no route, ever.
+#
+# The HTTPRoute is controller-neutral. By default the chart also brings its
+# own Gateway on the `traefik` GatewayClass (k3s's bundled Traefik, with its
+# Gateway provider on — deploy/README.md); `gateway.parentRefs` attaches the
+# route to an existing Gateway instead (a shared Envoy Gateway, say) and
+# drops the chart's own.
+{{- $ownGateway := not .Values.gateway.parentRefs }}
+{{- if $ownGateway }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: cloudbreak
+spec:
+  gatewayClassName: {{ .Values.gateway.className }}
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: {{ .Values.gateway.port }}
+      allowedRoutes:
+        namespaces: { from: Same }
+---
+{{- end }}
+# SSE needs no per-route config here: the Gateway API has no buffering knob,
+# and Traefik streams text/event-stream unbuffered with no idle cut (verified
+# against 3.7.13: an /events stream held 100 s, every 15 s heartbeat through
+# as sent). Do NOT set `timeouts.request` / `timeouts.backendRequest` on the
+# /events rule — they bound the WHOLE response, so they would end the stream.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: cloudbreak
+spec:
+  parentRefs:
+    {{- if $ownGateway }}
+    - name: cloudbreak
+      sectionName: http
+    {{- else }}
+    {{- toYaml .Values.gateway.parentRefs | nindent 4 }}
+    {{- end }}
+  {{- with .Values.gateway.hostnames }}
+  hostnames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    # Connect JSON: /api/<svc>/<method> → bff /<svc>/<method>.
+    - matches:
+        - path: { type: PathPrefix, value: /api }
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path: { type: ReplacePrefixMatch, replacePrefixMatch: / }
+      backendRefs:
+        - name: bff
+          port: 8080
+    # SSE + the token-handler navigations (same-origin top-level redirects,
+    # so the httpOnly session cookie lands on the SPA's origin).
+    - matches:
+        - path: { type: Exact, value: /events }
+        - path: { type: Exact, value: /login }
+        - path: { type: Exact, value: /callback }
+        - path: { type: Exact, value: /logout }
+      backendRefs:
+        - name: bff
+          port: 8080
+    # Everything else is the SPA (its nginx falls back to index.html for
+    # client-side routes).
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - name: frontend
+          port: 80

@@ -1,0 +1,33 @@
+# k3s's bundled Traefik with its Gateway API provider ON — what deploy/chart's
+# Gateway (gatewayClassName: traefik) needs. k3s ships the Gateway API CRDs
+# (standard channel) in its traefik-crd chart but leaves the provider off.
+#
+# Drop it into the k3s auto-deploy directory BEFORE the first `k3s server`
+# start, so Traefik deploys with it (applying it later works too; k3s then
+# redeploys Traefik):
+#
+#   sudo install -D -m 0644 deploy/k3s/traefik-gateway.yaml \
+#     /var/lib/rancher/k3s/server/manifests/traefik-gateway.yaml
+#
+# Checked against k3s v1.36.5+k3s1 (Traefik 3.7.13, chart 40.1.0, Gateway API
+# v1.6.1). .github/workflows/smoke.yml's k3s job uses this file.
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    providers:
+      kubernetesGateway:
+        enabled: true
+    # Registers the `traefik` GatewayClass. The chart's default Gateway is off:
+    # deploy/chart brings its own, in the release namespace.
+    gatewayClass:
+      enabled: true
+    gateway:
+      enabled: false
+    additionalArguments:
+      # Drop request headers whose names alias another (X_Dev_User for
+      # X-Dev-User): Traefik's own advice for entry points it fronts.
+      - --entrypoints.web.http.aliasheadersstrategy=delete

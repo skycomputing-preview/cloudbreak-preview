@@ -1,0 +1,136 @@
+# Zitadel + its Postgres as plain dev-values Deployments (T13 spec — NOT the
+# production charts). Deploys and comes ready, but stays UNPROVISIONED here:
+# the login path (criterion #3 with real users) is exercised against the
+# compose Zitadel (deploy/zitadel/); the chart's BFF runs AUTH_MODE=dev. Same
+# images/env as compose.dev.yml minus the FirstInstance PAT machinery (that
+# exists only to hand the host-run provision script a token via bind mount).
+# The masterkey is the fixed dev value — NOT a secret pattern to copy
+# (production keys live in OpenBao, frontend-auth.md §2). Off with
+# `zitadel.enabled=false` (the k3s smoke does).
+{{- if .Values.zitadel.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zitadel-db
+  labels: { app: zitadel-db }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: zitadel-db }
+  template:
+    metadata:
+      labels: { app: zitadel-db }
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.images.postgres }}
+          env:
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_PASSWORD
+              value: postgres
+            - name: POSTGRES_DB
+              value: zitadel
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            periodSeconds: 5
+            failureThreshold: 12
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zitadel-db
+spec:
+  selector: { app: zitadel-db }
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zitadel
+  labels: { app: zitadel }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: zitadel }
+  template:
+    metadata:
+      labels: { app: zitadel }
+    spec:
+      # REQUIRED: the `zitadel` Service otherwise injects docker-link envs
+      # (ZITADEL_PORT=tcp://<clusterIP>:8080) that collide with Zitadel's
+      # ZITADEL_-prefixed config loader → fatal "cannot parse 'Port' as uint".
+      enableServiceLinks: false
+      # Gate on the db instead of crash-looping through init (reuses the
+      # already-pulled postgres image; pg_isready needs no credentials).
+      initContainers:
+        - name: wait-db
+          image: {{ .Values.images.postgres }}
+          command:
+            - sh
+            - -c
+            - until pg_isready -h zitadel-db -U postgres; do sleep 1; done
+      containers:
+        - name: zitadel
+          image: {{ .Values.images.zitadel }}
+          args:
+            - start-from-init
+            - --masterkey
+            - Stage0LocalDevMasterkey-32chars!
+            - --tlsMode
+            - disabled
+          env:
+            - name: ZITADEL_DATABASE_POSTGRES_HOST
+              value: zitadel-db
+            - name: ZITADEL_DATABASE_POSTGRES_PORT
+              value: "5432"
+            - name: ZITADEL_DATABASE_POSTGRES_DATABASE
+              value: zitadel
+            - name: ZITADEL_DATABASE_POSTGRES_USER_USERNAME
+              value: zitadel
+            - name: ZITADEL_DATABASE_POSTGRES_USER_PASSWORD
+              value: zitadel
+            - name: ZITADEL_DATABASE_POSTGRES_USER_SSL_MODE
+              value: disable
+            - name: ZITADEL_DATABASE_POSTGRES_ADMIN_USERNAME
+              value: postgres
+            - name: ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD
+              value: postgres
+            - name: ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_MODE
+              value: disable
+            - name: ZITADEL_EXTERNALDOMAIN
+              value: zitadel
+            - name: ZITADEL_EXTERNALPORT
+              value: "8080"
+            - name: ZITADEL_EXTERNALSECURE
+              value: "false"
+            - name: ZITADEL_FIRSTINSTANCE_ORG_NAME
+              value: acme
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet: { path: /debug/ready, port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 24
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zitadel
+spec:
+  selector: { app: zitadel }
+  ports:
+    - port: 8080
+      targetPort: 8080
+{{- end }}

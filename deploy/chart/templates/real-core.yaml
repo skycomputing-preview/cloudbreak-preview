@@ -1,0 +1,76 @@
+# real-core — the Temporal engine + Postgres stores (env surface:
+# real-core/README.md). The two operator verbs run first as init containers of
+# the same image, as compose.tier2.yml's one-shot `migrate` + `seed`: both are
+# idempotent, so every pod start re-runs them harmlessly. real-core refuses to
+# start without the seeded Supervisor. replicas: 1 — two pods would race the
+# migration.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: real-core
+  labels: { app: real-core }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: real-core }
+  template:
+    metadata:
+      labels: { app: real-core }
+    spec:
+      {{- with .Values.images.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: wait-db
+          image: {{ .Values.images.postgres }}
+          command:
+            - sh
+            - -c
+            - until pg_isready -h postgres -U cloudbreak -d cloudbreak; do sleep 1; done
+        - name: migrate
+          {{- include "cloudbreak.image" (list $ "real-core") | nindent 10 }}
+          command: ["./node_modules/.bin/node-pg-migrate", "-m", "migrations", "up"]
+          env:
+            - name: DATABASE_URL
+              value: {{ include "cloudbreak.databaseUrl" . }}
+        - name: seed
+          {{- include "cloudbreak.image" (list $ "real-core") | nindent 10 }}
+          command: ["./node_modules/.bin/tsx", "scripts/seed.ts"]
+          env:
+            - name: DATABASE_URL
+              value: {{ include "cloudbreak.databaseUrl" . }}
+        {{- include "cloudbreak.waitTemporal" . | nindent 8 }}
+      containers:
+        - name: real-core
+          {{- include "cloudbreak.image" (list $ "real-core") | nindent 10 }}
+          ports:
+            - containerPort: 7443
+          env:
+            - name: PORT
+              value: "7443"
+            - name: DATABASE_URL
+              value: {{ include "cloudbreak.databaseUrl" . }}
+            - name: TEMPORAL_ADDRESS
+              value: temporal:7233
+            - name: WORKER_EXPECTED # the stub worker below serves all four family queues
+              value: stub
+            - name: CORE_SHARED_SECRET # W4-H-5: the one Secret both pods read
+              valueFrom:
+                secretKeyRef: { name: cloudbreak-core-secret, key: CORE_SHARED_SECRET }
+          livenessProbe:
+            httpGet: { path: /healthz, port: 7443 }
+          readinessProbe:
+            # ready = a stub workflow poller on every family queue
+            httpGet: { path: /readyz, port: 7443 }
+            periodSeconds: 5
+            failureThreshold: 36
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: real-core
+spec:
+  selector: { app: real-core }
+  ports:
+    - port: 7443
+      targetPort: 7443

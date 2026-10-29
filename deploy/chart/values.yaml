@@ -1,0 +1,51 @@
+# Dev values (the ONLY values profile — this chart deploys the Tier-2 stack
+# onto a local or CI cluster, nothing else). All app config flows
+# values → env (12-factor); no addresses are baked into images.
+images:
+  # The CloudBreak images .github/workflows/images.yml publishes:
+  # <registry>/{real-core,bff,stub-worker,frontend}:<tag>. Tags as in
+  # deploy/README.md: main, sha-<commit>, pr-<n>, a dispatch tag, a release.
+  registry: ghcr.io/united-clouds/cloudbreak
+  tag: main
+  # Empty = Always for `main` (it moves on every merge, so a cached copy is a
+  # stale build — compose's `--pull always` lesson), IfNotPresent otherwise.
+  pullPolicy: ""
+  # The GHCR packages are private: a docker-registry Secret in the release
+  # namespace, e.g. [{ name: ghcr }] (deploy/README.md shows the command).
+  pullSecrets: []
+  # Third-party dev servers (pinned exactly, same tags as
+  # deploy/compose.tier2.yml).
+  temporal: temporalio/temporal:1.8.0
+  zitadel: ghcr.io/zitadel/zitadel:v2.71.9
+  postgres: postgres:17.5-alpine
+
+bff:
+  # Dev-session auth: personas via x-dev-user (the SPA's picker). The oidc
+  # login path is compose-only — Zitadel deploys here unprovisioned.
+  authMode: dev
+  devUser: rd-owner
+  sseHeartbeatMs: "15000"
+  dedupeTtlMs: "300000"
+
+stubWorker:
+  stepMs: "250"
+
+zitadel:
+  # Deploys ready but unprovisioned; nothing in the chart talks to it. The
+  # k3s smoke turns it off to save the boot.
+  enabled: true
+
+gateway:
+  # Default: the chart's own Gateway on this GatewayClass. `traefik` is the
+  # class k3s's bundled Traefik registers once its Gateway provider is on.
+  className: traefik
+  # Traefik binds a Gateway listener to the entryPoint on the SAME port: 8000
+  # is its `web` entryPoint, published as port 80 by its Service.
+  port: 8000
+  # Attach the HTTPRoute to an existing Gateway instead — the chart then
+  # renders no Gateway of its own. E.g. a shared Envoy Gateway:
+  #   [{ name: shared, namespace: gateway-system, sectionName: http }]
+  # (that Gateway's listener must allow routes from this namespace).
+  parentRefs: []
+  # Optional: answer only these host names, e.g. [cloudbreak.example.com].
+  hostnames: []
