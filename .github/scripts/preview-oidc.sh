@@ -64,6 +64,12 @@ compose_env() {
 case "${1:-}" in
 start)
   compose_env
+  # The auth hostname's DNS record comes from its Public Hostname on the
+  # tunnel; without one, say so now instead of a 5-minute discovery wait.
+  if ! getent hosts "$CB_AUTH_HOST" >/dev/null; then
+    echo "::error::the auth hostname does not resolve. Give this stack's tunnel a Public Hostname for it (service http://localhost:8200, no Access application) in the Cloudflare dashboard; that creates its DNS record. Or check the *_AUTH_URL secret for a typo"
+    exit 1
+  fi
   mkdir -p "$STATE"
   chmod 777 "$STATE" # Zitadel and the provisioner write here as their own users
   masterkey=$(openssl rand -hex 16) # exactly the 32 characters Zitadel takes
@@ -105,6 +111,10 @@ provision)
     sleep 5
   done
   if [ "${code:-}" != 200 ]; then
+    if ! getent hosts "$CB_AUTH_HOST" >/dev/null; then
+      echo "::error::the auth hostname does not resolve: it needs a Public Hostname on this stack's tunnel (service http://localhost:8200), which creates its DNS record"
+      exit 1
+    fi
     echo "::error::Zitadel's discovery did not answer on the auth URL (last: HTTP ${code:-none}). Does the tunnel have a Public Hostname for it with service http://localhost:8200?"
     exit 1
   fi
