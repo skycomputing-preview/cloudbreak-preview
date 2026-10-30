@@ -151,7 +151,7 @@ jobs:
                   echo "::error::$name does not meet Zitadel's password policy; it needs $(IFS=,; echo "${broken[*]}" | sed 's/,/, /g')"
                   exit 1
                 fi
-              fi
+              done
               ;;
             *)
               echo "::error::auth must be dev or oidc (got '$AUTH')"
