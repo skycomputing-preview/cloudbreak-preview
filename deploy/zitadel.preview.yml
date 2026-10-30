@@ -46,6 +46,10 @@ services:
       ZITADEL_EXTERNALDOMAIN: ${CB_AUTH_HOST:?the auth hostname}
       ZITADEL_EXTERNALPORT: "443"
       ZITADEL_EXTERNALSECURE: "true"
+      # What --tlsMode external sets for `start`, here for the healthcheck:
+      # `zitadel ready` reads TLS.Enabled from the config alone (default
+      # true), and would probe https:// on the plain-http port forever.
+      ZITADEL_TLS_ENABLED: "false"
       ZITADEL_FIRSTINSTANCE_ORG_NAME: acme
       ZITADEL_FIRSTINSTANCE_PATPATH: /machinekey/pat
       ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME: provisioner
