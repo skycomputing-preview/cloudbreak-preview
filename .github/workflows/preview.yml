@@ -132,6 +132,26 @@ jobs:
                 echo "::error::CB_PREVIEW_ADMIN_PASSWORD must differ from CB_PREVIEW_OIDC_PASSWORD"
                 exit 1
               fi
+              # Zitadel's default password policy, checked here so a weak
+              # secret fails in seconds, not after the stack and Zitadel
+              # are up (the provisioner's 400 names one rule at a time).
+              for name in CB_PREVIEW_OIDC_PASSWORD CB_PREVIEW_ADMIN_PASSWORD; do
+                case $name in
+                  CB_PREVIEW_OIDC_PASSWORD) pw=$OIDC_PASSWORD ;;
+                  *) pw=$ADMIN_PASSWORD ;;
+                esac
+                [ -n "$pw" ] || continue
+                broken=()
+                [ "${#pw}" -ge 8 ] || broken+=("at least 8 characters")
+                [[ "$pw" =~ [A-Z] ]] || broken+=("an upper-case letter")
+                [[ "$pw" =~ [a-z] ]] || broken+=("a lower-case letter")
+                [[ "$pw" =~ [0-9] ]] || broken+=("a digit")
+                [[ "$pw" =~ [^A-Za-z0-9] ]] || broken+=("a symbol")
+                if [ "${#broken[@]}" -gt 0 ]; then
+                  echo "::error::$name does not meet Zitadel's password policy; it needs $(IFS=,; echo "${broken[*]}" | sed 's/,/, /g')"
+                  exit 1
+                fi
+              fi
               ;;
             *)
               echo "::error::auth must be dev or oidc (got '$AUTH')"
