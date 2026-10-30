@@ -1,0 +1,66 @@
+# Zitadel for the preview's oidc mode (`auth: oidc`), in its own compose
+# project. Both jobs run it on the runner's Docker; on k3s too, because the
+# BFF reaches it by its public URL either way.
+#
+# The issuer is the tunnel's AUTH hostname (CB_PREVIEW_CF_*_AUTH_URL):
+# Cloudflare terminates TLS and the tunnel forwards to http://localhost:8200
+# here, so Zitadel runs with --tlsMode external and a 443/https external
+# domain. Settings follow deploy/compose.dev.yml upstream (org `acme`, the
+# `provisioner` machine user whose PAT the provisioner uses), except:
+# - the external domain is the auth host (CB_AUTH_HOST);
+# - the masterkey is minted per run (ZITADEL_MASTERKEY), never a fixed value;
+# - the port is published on loopback only (cloudflared's origin).
+#
+# CB_ZITADEL_STATE is a host directory both Zitadel (it writes the PAT there)
+# and the provisioner (it reads the PAT, writes client_id) mount.
+services:
+  zitadel-db:
+    image: postgres:17.5-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: zitadel
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  zitadel:
+    image: ghcr.io/zitadel/zitadel:v2.71.9
+    command: start-from-init --masterkeyFromEnv --tlsMode external
+    depends_on:
+      zitadel-db:
+        condition: service_healthy
+    environment:
+      ZITADEL_MASTERKEY: ${ZITADEL_MASTERKEY:?mint one per run}
+      ZITADEL_DATABASE_POSTGRES_HOST: zitadel-db
+      ZITADEL_DATABASE_POSTGRES_PORT: "5432"
+      ZITADEL_DATABASE_POSTGRES_DATABASE: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_USERNAME: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_PASSWORD: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_SSL_MODE: disable
+      ZITADEL_DATABASE_POSTGRES_ADMIN_USERNAME: postgres
+      ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD: postgres
+      ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_MODE: disable
+      ZITADEL_EXTERNALDOMAIN: ${CB_AUTH_HOST:?the auth hostname}
+      ZITADEL_EXTERNALPORT: "443"
+      ZITADEL_EXTERNALSECURE: "true"
+      # What --tlsMode external sets for `start`, here for the healthcheck:
+      # `zitadel ready` reads TLS.Enabled from the config alone (default
+      # true), and would probe https:// on the plain-http port forever.
+      ZITADEL_TLS_ENABLED: "false"
+      ZITADEL_FIRSTINSTANCE_ORG_NAME: acme
+      ZITADEL_FIRSTINSTANCE_PATPATH: /machinekey/pat
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME: provisioner
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME: provisioner
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE: "2029-01-01T00:00:00Z"
+    ports:
+      - "127.0.0.1:8200:8080"
+    volumes:
+      - ${CB_ZITADEL_STATE:?the state directory}:/machinekey
+    healthcheck:
+      test: ["CMD", "/app/zitadel", "ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 36

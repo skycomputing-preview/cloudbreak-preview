@@ -20,6 +20,7 @@ paths=(
   deploy/chart/values.yaml
   deploy/chart/templates
   .github/scripts/tier2-smoke.sh
+  deploy/zitadel/provision.mjs
 )
 
 git -C "$src" fetch --quiet origin

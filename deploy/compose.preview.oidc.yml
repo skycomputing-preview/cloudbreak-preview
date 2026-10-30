@@ -1,0 +1,17 @@
+# Preview-only override for `auth: oidc`: the BFF as the OIDC token-handler
+# against the preview's Zitadel (deploy/zitadel.preview.yml), instead of the
+# vendored file's AUTH_MODE=dev. The compose job applies it to the bff alone,
+# AFTER the smoke (which needs dev sessions): `up -d --no-deps bff`.
+#
+# The issuer is the PUBLIC auth URL: the browser and the BFF must agree on it,
+# and the BFF reaches it over the internet like the browser does. The
+# redirect URI is the app's public callback, which zitadel-preview.mjs
+# registers. The cookies come out `__Host-` + Secure (an https redirect URI).
+services:
+  bff:
+    environment:
+      AUTH_MODE: oidc
+      OIDC_ISSUER: ${CB_AUTH_URL:?}
+      OIDC_CLIENT_ID: ${CB_OIDC_CLIENT_ID:?}
+      OIDC_REDIRECT_URI: ${CB_APP_URL:?}/callback
+      COOKIE_SEAL_KEY: ${CB_COOKIE_SEAL_KEY:?}
