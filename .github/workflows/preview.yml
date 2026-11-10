@@ -342,6 +342,7 @@ jobs:
           path: |
             tier2-compose.log
             core-readyz.json
+            core-queues.json
             session.json
             shell.html
       - name: tear down
@@ -522,7 +523,8 @@ jobs:
             sleep 2
           done
           # real-core and the BFF are not browser-reachable (single seam):
-          # reach their /readyz through the apiserver's service proxy.
+          # reach their /readyz (and real-core's /debug/queues) through the
+          # apiserver's service proxy.
           kubectl proxy --port=8001 > kubectl-proxy.log 2>&1 &
           proxy=$!
           trap 'kill $proxy' EXIT
@@ -636,6 +638,7 @@ jobs:
             k3s-cluster.log
             k3s-pods.log
             core-readyz.json
+            core-queues.json
             session.json
             shell.html
       - name: tear down the tunnel (and Zitadel)
