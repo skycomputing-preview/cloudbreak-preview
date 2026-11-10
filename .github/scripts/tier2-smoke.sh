@@ -4,10 +4,14 @@
 #
 #   UI_URL    the SPA origin — /api and /events must route to the BFF from here
 #             (compose and k3s alike: the Traefik gateway)
-#   CORE_URL  real-core, for /readyz (never browser-reachable; the jobs expose it)
+#   CORE_URL  real-core, for /readyz and /debug/queues (never browser-reachable;
+#             the jobs expose it)
 #   BFF_URL   the BFF, for /readyz
+#   CB_CORE_SECRET  optional — the core's bearer; when set (the compose job),
+#             the census at /debug/queues is read and grepped (W4-H-12)
 #
-# Leaves core-readyz.json, session.json and shell.html in the working directory.
+# Leaves core-readyz.json, core-queues.json (with the secret), session.json and
+# shell.html in the working directory.
 set -euo pipefail
 : "${UI_URL:?}" "${CORE_URL:?}" "${BFF_URL:?}"
 
@@ -28,11 +32,23 @@ fetch() {
 }
 
 echo "::group::real-core /readyz (stub worker on all four family queues)"
+# WORKER_EXPECTED=stub with all four queues required: a 200 already means a
+# stub poller on each of the four. W4-H-12: the body is the verdict only.
 fetch "$CORE_URL/readyz" | tee core-readyz.json
 echo
-for q in cb-migration cb-assessment cb-tco cb-cluster-lifecycle; do
-  grep -q "\"queue\":\"$q\"" core-readyz.json || { echo "::error::queue $q missing from readyz"; exit 1; }
-done
+# The census is behind the core's bearer: no header → exactly 401. (`fetch`
+# fails on any code ≥ 400, hence the bare curl.)
+code="$(curl -s -o /dev/null -w '%{http_code}' "$CORE_URL/debug/queues")"
+[ "$code" = 401 ] || { echo "::error::$CORE_URL/debug/queues without the bearer answered $code, not 401"; exit 1; }
+if [ -n "${CB_CORE_SECRET:-}" ]; then
+  fetch "$CORE_URL/debug/queues" -H "authorization: Bearer $CB_CORE_SECRET" | tee core-queues.json
+  echo
+  for q in cb-migration cb-assessment cb-tco cb-cluster-lifecycle; do
+    grep -q "\"queue\":\"$q\"" core-queues.json || { echo "::error::queue $q missing from /debug/queues"; exit 1; }
+  done
+else
+  echo "no CB_CORE_SECRET here — the census grep is skipped (the 401 check above still ran)"
+fi
 echo "::endgroup::"
 fetch "$BFF_URL/readyz"
 echo

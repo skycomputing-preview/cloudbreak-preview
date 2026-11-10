@@ -342,6 +342,7 @@ jobs:
           path: |
             tier2-compose.log
             core-readyz.json
+            core-queues.json
             session.json
             shell.html
       - name: tear down
@@ -636,6 +637,7 @@ jobs:
             k3s-cluster.log
             k3s-pods.log
             core-readyz.json
+            core-queues.json
             session.json
             shell.html
       - name: tear down the tunnel (and Zitadel)
