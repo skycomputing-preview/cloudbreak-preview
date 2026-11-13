@@ -286,7 +286,7 @@ jobs:
           BFF_URL: http://127.0.0.1:8080
         run: .github/scripts/tier2-smoke.sh
       # The smoke proves every hop answers; this proves the workflows run.
-      # Every run gets all five, held or not: collaborators see what they
+      # Every run gets all six, held or not: collaborators see what they
       # changed during the hold (README, "Workflow runs").
       - name: workflows — runs walk on Temporal, each phase child on its family queue
         timeout-minutes: 10
@@ -544,7 +544,7 @@ jobs:
           svc=http://127.0.0.1:8001/api/v1/namespaces/$NS/services
           UI_URL=http://localhost CORE_URL="$svc/real-core:7443/proxy" BFF_URL="$svc/bff:8080/proxy" \
             .github/scripts/tier2-smoke.sh
-      # As compose: all five runs, held or not.
+      # As compose: all six runs, held or not.
       - name: workflows — runs walk on Temporal, each phase child on its family queue
         timeout-minutes: 10
         env:

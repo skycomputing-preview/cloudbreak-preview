@@ -12,20 +12,25 @@
 #             ... exec -T temporal temporal" or "kubectl -n <ns> exec
 #             deploy/temporal -- temporal"
 #
-# Five runs, in this order (the rejected S6 needs retail-loyalty still at home
-# on aws-eu; the completed S6 then moves it; S1 and S2 depend on neither):
-#   S5  TCO comparison of retail-loyalty → DONE        cb-tco: compare
-#   S6  retail-loyalty → azure-eu, provision review
-#       rejected → ABORTED, the group unmoved          cb-migration: plan, provision, rollback
-#   S6  the same move, every gate approved → DONE      cb-migration: plan, provision, cutover
-#   S1  assessment of Checkout → DONE                  cb-assessment: assess
-#   S2  an HA cluster on azure-eu → DONE               cb-cluster-lifecycle: create
+# Six runs, in this order (the rejected S6 needs retail-loyalty still at home
+# on aws-eu; the completed S6 then moves it, and the return trip brings it
+# back; S1 and S2 depend on none of them):
+#   S5         TCO comparison of retail-loyalty → DONE   cb-tco: compare
+#   S6         retail-loyalty → azure-eu, provision review
+#              rejected → ABORTED, the group unmoved     cb-migration: plan, provision, rollback
+#   S6         the same move, every gate approved → DONE cb-migration: plan, provision, cutover
+#   S6 return  azure-eu → aws-eu, every gate → DONE      cb-migration: plan, provision, cutover
+#   S1         assessment of Checkout → DONE             cb-assessment: assess
+#   S2         an HA cluster on azure-eu → DONE          cb-cluster-lifecycle: create
 #
-# Afterwards, what collaborators find during the hold: retail-loyalty placed
-# on azure-eu/standard, with one TCO comparison, one aborted and one completed
-# migration (each with its report and settled gate cards); Checkout carrying
-# an assessment; azure-eu with a second (HA) cluster. No walkthrough arc uses
-# these subjects.
+# Afterwards, what collaborators find during the hold: retail-loyalty still on
+# aws-eu/standard, with one TCO comparison, one aborted and two completed
+# migrations (each with its report and settled gate cards); Checkout carrying
+# an assessment; azure-eu with a second (HA) cluster. retail-loyalty ends back
+# on aws-eu because Arc 3 of the demo arcs (united-clouds/cloudbreak
+# integration/e2e/demo-arcs.spec.ts) starts it there. Checkout appears only in
+# Arc 1's refusal beats, which depend on it not being on CloudBreak; an
+# assessment doesn't change that.
 #
 # Leaves workflows.md (also added to the step summary) and workflows.log
 # (every terminal RunView and Temporal description read) in the working
@@ -38,6 +43,7 @@ stderr="$(mktemp)"
 trap 'rm -f "$stderr"' EXIT
 
 GROUP=workloadGroups/retail-loyalty
+HOME_SITE=sites/aws-eu
 HOME_CLUSTER=sites/aws-eu/clusters/standard
 TARGET=sites/azure-eu # same geography and compliance as aws-eu (D4)
 TARGET_CLUSTER=sites/azure-eu/clusters/standard
@@ -196,21 +202,22 @@ on_temporal() {
   done
 }
 
-# migrate VERDICT: an S6 of the group to the target, gate 1 and plan review
-# approved; provision review gets VERDICT, and an approval runs to cut-over.
+# migrate SCENARIO DEST VERDICT: an S6 of the group to the site DEST, gate 1
+# and plan review approved; provision review gets VERDICT, and an approval
+# runs to cut-over. SCENARIO labels the run in the summary table.
 migrate() {
-  local op
-  op="$(start rd-owner ActionService/RequestMigration "{\"workloadGroups\":[\"$GROUP\"],\"level\":\"MIGRATION_LEVEL_WORKLOAD_GROUP\",\"targetSite\":\"$TARGET\",\"reason\":\"preview: exercise the Temporal workflows\"}")"
+  local op scenario=$1 dest=$2 verdict=$3
+  op="$(start rd-owner ActionService/RequestMigration "{\"workloadGroups\":[\"$GROUP\"],\"level\":\"MIGRATION_LEVEL_WORKLOAD_GROUP\",\"targetSite\":\"$dest\",\"reason\":\"preview: exercise the Temporal workflows\"}")"
   decide business-owner "$op" approve # gate 1: migration request
   decide rd-owner "$op" approve       # plan review, after the plan child
-  decide rd-owner "$op" "$1"          # provision review, after the provision child
-  if [ "$1" = reject ]; then
+  decide rd-owner "$op" "$verdict"    # provision review, after the provision child
+  if [ "$verdict" = reject ]; then
     settle "$op" ABORTED
-    on_temporal "S6 rejected" "$op" plan cb-migration provision cb-migration rollback cb-migration
+    on_temporal "$scenario" "$op" plan cb-migration provision cb-migration rollback cb-migration
   else
     decide business-owner "$op" approve # cut-over
     settle "$op" DONE
-    on_temporal "S6" "$op" plan cb-migration provision cb-migration cutover cb-migration
+    on_temporal "$scenario" "$op" plan cb-migration provision cb-migration cutover cb-migration
   fi
 }
 
@@ -230,13 +237,19 @@ on_temporal S5 "$op" compare cb-tco
 echo "::endgroup::"
 
 echo "::group::S6: $GROUP → $TARGET, rejected at provision review"
-migrate reject
+migrate "S6 rejected" "$TARGET" reject
 [ "$(placed)" = "$HOME_CLUSTER" ] || { echo "::error::$GROUP moved after a rejected migration"; exit 1; }
 echo "::endgroup::"
 
 echo "::group::S6: $GROUP → $TARGET, every gate approved"
-migrate approve
+migrate S6 "$TARGET" approve
 [ "$(placed)" = "$TARGET_CLUSTER" ] || { echo "::error::$GROUP is not on $TARGET_CLUSTER after its migration"; exit 1; }
+echo "::endgroup::"
+
+# Home again: Arc 3 of the demo arcs starts retail-loyalty on aws-eu.
+echo "::group::S6 return: $GROUP → $HOME_SITE, every gate approved"
+migrate "S6 return" "$HOME_SITE" approve
+[ "$(placed)" = "$HOME_CLUSTER" ] || { echo "::error::$GROUP is not back on $HOME_CLUSTER after its return"; exit 1; }
 echo "::endgroup::"
 
 echo "::group::S1: assessment of Checkout"

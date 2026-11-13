@@ -43,7 +43,7 @@ workflow must have closed, and each phase child the stub worker served must
 have completed on its family queue. The job summary lists every workflow
 checked.
 
-Every run gets all five, in this order. Together they cover every phase
+Every run gets all six, in this order. Together they cover every phase
 child type the stub worker serves.
 
 | Run | Queue: phase children |
@@ -51,18 +51,21 @@ child type the stub worker serves.
 | S5: TCO comparison of `retail-loyalty` | `cb-tco`: compare |
 | S6: `retail-loyalty` → Azure EU, rejected at provision review | `cb-migration`: plan, provision, rollback |
 | S6: `retail-loyalty` → Azure EU, every gate approved | `cb-migration`: plan, provision, cutover |
+| S6 return: `retail-loyalty` → AWS EU, every gate approved | `cb-migration`: plan, provision, cutover |
 | S1: assessment of Checkout | `cb-assessment`: assess |
 | S2: an HA cluster on Azure EU | `cb-cluster-lifecycle`: create |
 
 What collaborators find during the hold:
 
-- `retail-loyalty` is placed on Azure EU, with one TCO comparison, one
-  aborted migration and one completed migration, each with its report and
-  settled gate cards.
+- `retail-loyalty` stays on AWS EU, with one TCO comparison, one aborted
+  migration and two completed migrations, each with its report and settled
+  gate cards.
 - Checkout carries an assessment.
 - Azure EU has a second cluster (HA).
 
-None of these subjects is used by the walkthrough's arcs.
+`retail-loyalty` ends back on AWS EU, where Arc 3 of the demo arcs starts it.
+Checkout appears in Arc 1's refusal beats, which depend only on Checkout not
+being on CloudBreak, and an assessment doesn't change that.
 
 ## Secrets and variables
 
