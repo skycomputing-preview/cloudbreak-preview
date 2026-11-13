@@ -64,8 +64,9 @@ What collaborators find during the hold:
 - Azure EU has a second cluster (HA).
 
 `retail-loyalty` ends back on AWS EU, where Arc 3 of the demo arcs starts it.
-Checkout appears in Arc 1's refusal beats, which depend only on Checkout not
-being on CloudBreak, and an assessment doesn't change that.
+Checkout appears in the arc-entry refusal beats (the harness's own test,
+before Arc 1), which depend only on Checkout not being on CloudBreak, and an
+assessment doesn't change that.
 
 ## Secrets and variables
 

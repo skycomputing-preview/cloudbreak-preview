@@ -29,8 +29,8 @@
 # an assessment; azure-eu with a second (HA) cluster. retail-loyalty ends back
 # on aws-eu because Arc 3 of the demo arcs (united-clouds/cloudbreak
 # integration/e2e/demo-arcs.spec.ts) starts it there. Checkout appears only in
-# Arc 1's refusal beats, which depend on it not being on CloudBreak; an
-# assessment doesn't change that.
+# the arc-entry refusal beats (their own test, before Arc 1), which depend on
+# it not being on CloudBreak; an assessment doesn't change that.
 #
 # Leaves workflows.md (also added to the step summary) and workflows.log
 # (every terminal RunView and Temporal description read) in the working
