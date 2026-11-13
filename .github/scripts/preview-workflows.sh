@@ -11,18 +11,21 @@
 #   TEMPORAL  the temporal CLI beside the server, as words: "docker compose
 #             ... exec -T temporal temporal" or "kubectl -n <ns> exec
 #             deploy/temporal -- temporal"
-#   SCOPE     history (the default) or full
-#     history  runs that leave the seeded world as it was, adding only history
-#              (runs, reports, settled gate cards) on retail-loyalty, a group
-#              no walkthrough arc uses:
-#                S5  TCO comparison → DONE                cb-tco: compare
-#                S6  → azure-eu, provision review rejected
-#                    → ABORTED, the group unmoved          cb-migration: plan, provision, rollback
-#     full     history, then runs that change what collaborators would see,
-#              for a stack nobody holds:
-#                S6  → azure-eu, every gate → DONE         cb-migration: plan, provision, cutover
-#                S1  assessment of Checkout → DONE         cb-assessment: assess
-#                S2  an HA cluster on azure-eu → DONE      cb-cluster-lifecycle: create
+#
+# Five runs, in this order (the rejected S6 needs retail-loyalty still at home
+# on aws-eu; the completed S6 then moves it; S1 and S2 depend on neither):
+#   S5  TCO comparison of retail-loyalty → DONE        cb-tco: compare
+#   S6  retail-loyalty → azure-eu, provision review
+#       rejected → ABORTED, the group unmoved          cb-migration: plan, provision, rollback
+#   S6  the same move, every gate approved → DONE      cb-migration: plan, provision, cutover
+#   S1  assessment of Checkout → DONE                  cb-assessment: assess
+#   S2  an HA cluster on azure-eu → DONE               cb-cluster-lifecycle: create
+#
+# Afterwards, what collaborators find during the hold: retail-loyalty placed
+# on azure-eu/standard, with one TCO comparison, one aborted and one completed
+# migration (each with its report and settled gate cards); Checkout carrying
+# an assessment; azure-eu with a second (HA) cluster. No walkthrough arc uses
+# these subjects.
 #
 # Leaves workflows.md (also added to the step summary) and workflows.log
 # (every terminal RunView and Temporal description read) in the working
@@ -30,14 +33,6 @@
 set -euo pipefail
 shopt -s inherit_errexit # a failure inside $(...) fails the assignment
 : "${UI_URL:?}" "${TEMPORAL:?}"
-SCOPE=${SCOPE:-history}
-case "$SCOPE" in
-  history | full) ;;
-  *)
-    echo "::error::SCOPE must be history or full (got '$SCOPE')"
-    exit 1
-    ;;
-esac
 read -r -a temporal <<<"$TEMPORAL"
 stderr="$(mktemp)"
 trap 'rm -f "$stderr"' EXIT
@@ -50,7 +45,7 @@ WAIT=${WAIT_SECONDS:-120} # per wait; the stub worker paces 250 ms a step
 
 : >workflows.log
 {
-  echo "### Temporal workflows ($SCOPE)"
+  echo "### Temporal workflows"
   echo
   echo "| Scenario | Run | Workflow | Type | Task queue | Status |"
   echo "|---|---|---|---|---|---|"
@@ -239,27 +234,25 @@ migrate reject
 [ "$(placed)" = "$HOME_CLUSTER" ] || { echo "::error::$GROUP moved after a rejected migration"; exit 1; }
 echo "::endgroup::"
 
-if [ "$SCOPE" = full ]; then
-  echo "::group::S6: $GROUP → $TARGET, every gate approved"
-  migrate approve
-  [ "$(placed)" = "$TARGET_CLUSTER" ] || { echo "::error::$GROUP is not on $TARGET_CLUSTER after its migration"; exit 1; }
-  echo "::endgroup::"
+echo "::group::S6: $GROUP → $TARGET, every gate approved"
+migrate approve
+[ "$(placed)" = "$TARGET_CLUSTER" ] || { echo "::error::$GROUP is not on $TARGET_CLUSTER after its migration"; exit 1; }
+echo "::endgroup::"
 
-  echo "::group::S1: assessment of Checkout"
-  op="$(start rd-owner ActionService/AssessPortability '{"workload":"sites/gcp-eu/workloads/checkout"}')"
-  settle "$op" DONE
-  on_temporal S1 "$op" assess cb-assessment
-  echo "::endgroup::"
+echo "::group::S1: assessment of Checkout"
+op="$(start rd-owner ActionService/AssessPortability '{"workload":"sites/gcp-eu/workloads/checkout"}')"
+settle "$op" DONE
+on_temporal S1 "$op" assess cb-assessment
+echo "::endgroup::"
 
-  echo "::group::S2: an HA cluster on $TARGET"
-  # The request settles gate 1 for the Infra Owner; go-live is the site's
-  # System Admin's.
-  op="$(start infra-owner ActionService/DeployCloudBreakToSite "{\"site\":\"$TARGET\",\"clusterType\":\"clusterTypes/ha\"}")"
-  decide sysadmin "$op" approve
-  settle "$op" DONE
-  on_temporal S2 "$op" create cb-cluster-lifecycle
-  echo "::endgroup::"
-fi
+echo "::group::S2: an HA cluster on $TARGET"
+# The request settles gate 1 for the Infra Owner; go-live is the site's
+# System Admin's.
+op="$(start infra-owner ActionService/DeployCloudBreakToSite "{\"site\":\"$TARGET\",\"clusterType\":\"clusterTypes/ha\"}")"
+decide sysadmin "$op" approve
+settle "$op" DONE
+on_temporal S2 "$op" create cb-cluster-lifecycle
+echo "::endgroup::"
 
 cat workflows.md
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat workflows.md >>"$GITHUB_STEP_SUMMARY"; fi

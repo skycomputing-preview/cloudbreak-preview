@@ -286,14 +286,13 @@ jobs:
           BFF_URL: http://127.0.0.1:8080
         run: .github/scripts/tier2-smoke.sh
       # The smoke proves every hop answers; this proves the workflows run.
-      # A stack collaborators will hold gets only the runs that leave its
-      # world as seeded (history); one nobody holds gets every run (full).
+      # Every run gets all five, held or not: collaborators see what they
+      # changed during the hold (README, "Workflow runs").
       - name: workflows — runs walk on Temporal, each phase child on its family queue
         timeout-minutes: 10
         env:
           UI_URL: http://localhost
           TEMPORAL: ${{ env.COMPOSE }} exec -T temporal temporal
-          SCOPE: ${{ env.EXPOSE == 'true' && 'history' || 'full' }}
         run: .github/scripts/preview-workflows.sh
 
       # oidc: after the smoke and the workflows, which need dev sessions.
@@ -545,13 +544,12 @@ jobs:
           svc=http://127.0.0.1:8001/api/v1/namespaces/$NS/services
           UI_URL=http://localhost CORE_URL="$svc/real-core:7443/proxy" BFF_URL="$svc/bff:8080/proxy" \
             .github/scripts/tier2-smoke.sh
-      # As compose: history for a held stack, full for one nobody holds.
+      # As compose: all five runs, held or not.
       - name: workflows — runs walk on Temporal, each phase child on its family queue
         timeout-minutes: 10
         env:
           UI_URL: http://localhost
           TEMPORAL: kubectl -n ${{ env.NS }} exec deploy/temporal -- temporal
-          SCOPE: ${{ env.EXPOSE == 'true' && 'history' || 'full' }}
         run: .github/scripts/preview-workflows.sh
 
       # oidc: after the smoke and the workflows, which need dev sessions.

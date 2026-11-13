@@ -24,7 +24,7 @@ Actions → **preview** → Run workflow:
 |---|---|---|
 | `tag` | `main` | Which image build: `main` (the newest merge), `sha-<commit>`, `pr-<n>`, a dispatch tag or a release. |
 | `target` | `both` | `compose`, `k3s` or `both`. |
-| `hold_minutes` | `60` | How long each stack stays up for collaborators after its checks pass. `0` = checks only, with every [workflow run](#workflow-runs); max `300`. |
+| `hold_minutes` | `60` | How long each stack stays up for collaborators after its checks pass. `0` = checks only; max `300`. |
 | `auth` | `dev` | How collaborators sign in: `dev` (pick a persona) or `oidc` (a real Zitadel login). See [Signing in](#signing-in). |
 
 - **Ending early:** cancel the run. Teardown still runs.
@@ -43,22 +43,26 @@ workflow must have closed, and each phase child the stub worker served must
 have completed on its family queue. The job summary lists every workflow
 checked.
 
-| Run | Queue: phase children | Runs when |
-|---|---|---|
-| S5: TCO comparison of `retail-loyalty` | `cb-tco`: compare | always |
-| S6: `retail-loyalty` → Azure EU, rejected at provision review | `cb-migration`: plan, provision, rollback | always |
-| S6: `retail-loyalty` → Azure EU, every gate approved | `cb-migration`: plan, provision, cutover | the stack is not held |
-| S1: assessment of Checkout | `cb-assessment`: assess | the stack is not held |
-| S2: an HA cluster on Azure EU | `cb-cluster-lifecycle`: create | the stack is not held |
+Every run gets all five, in this order. Together they cover every phase
+child type the stub worker serves.
 
-- **A stack held for collaborators** gets only the first two runs. They
-  leave the world as seeded and add only history to `retail-loyalty`, a
-  group no walkthrough arc uses: one TCO comparison, one aborted migration
-  with its report, and their settled gate cards.
-- **A stack nobody holds** (`hold_minutes: 0`, or no tunnel for it) gets all
-  five. Together they cover every phase child type the stub worker serves.
-  The last three would change what collaborators see: the group moves, the
-  assessment demo target gets a score, and Azure EU gets a second cluster.
+| Run | Queue: phase children |
+|---|---|
+| S5: TCO comparison of `retail-loyalty` | `cb-tco`: compare |
+| S6: `retail-loyalty` → Azure EU, rejected at provision review | `cb-migration`: plan, provision, rollback |
+| S6: `retail-loyalty` → Azure EU, every gate approved | `cb-migration`: plan, provision, cutover |
+| S1: assessment of Checkout | `cb-assessment`: assess |
+| S2: an HA cluster on Azure EU | `cb-cluster-lifecycle`: create |
+
+What collaborators find during the hold:
+
+- `retail-loyalty` is placed on Azure EU, with one TCO comparison, one
+  aborted migration and one completed migration, each with its report and
+  settled gate cards.
+- Checkout carries an assessment.
+- Azure EU has a second cluster (HA).
+
+None of these subjects is used by the walkthrough's arcs.
 
 ## Secrets and variables
 
