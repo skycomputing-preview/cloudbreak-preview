@@ -6,8 +6,10 @@
 #   k3s      deploy/chart on a single-node k3s, its bundled Traefik serving the
 #            chart's Gateway API Gateway + HTTPRoute
 #
-# Both run the same smoke (.github/scripts/tier2-smoke.sh). Only a stack that
-# passed it is exposed: cloudflared connects the job's tunnel, the job checks
+# Both run the same smoke (.github/scripts/tier2-smoke.sh), then drive real
+# runs through the gateway and check each one's workflows on Temporal
+# (.github/scripts/preview-workflows.sh). Only a stack that passed both is
+# exposed: cloudflared connects the job's tunnel, the job checks
 # that Cloudflare Access answers in front of the public URL (it refuses to
 # expose an open URL), holds the stack for `hold_minutes` (default 60), then
 # tears everything down. Cancel the run to end a preview early.
@@ -283,8 +285,18 @@ jobs:
           CORE_URL: http://127.0.0.1:7443
           BFF_URL: http://127.0.0.1:8080
         run: .github/scripts/tier2-smoke.sh
+      # The smoke proves every hop answers; this proves the workflows run.
+      # A stack collaborators will hold gets only the runs that leave its
+      # world as seeded (history); one nobody holds gets every run (full).
+      - name: workflows — runs walk on Temporal, each phase child on its family queue
+        timeout-minutes: 10
+        env:
+          UI_URL: http://localhost
+          TEMPORAL: ${{ env.COMPOSE }} exec -T temporal temporal
+          SCOPE: ${{ env.EXPOSE == 'true' && 'history' || 'full' }}
+        run: .github/scripts/preview-workflows.sh
 
-      # oidc: after the smoke, which needs dev sessions.
+      # oidc: after the smoke and the workflows, which need dev sessions.
       - name: "oidc: provision Zitadel (the world's users)"
         if: env.OIDC == 'true'
         timeout-minutes: 10
@@ -345,6 +357,7 @@ jobs:
             core-queues.json
             session.json
             shell.html
+            workflows.log
       - name: tear down
         if: always()
         env:
@@ -532,9 +545,18 @@ jobs:
           svc=http://127.0.0.1:8001/api/v1/namespaces/$NS/services
           UI_URL=http://localhost CORE_URL="$svc/real-core:7443/proxy" BFF_URL="$svc/bff:8080/proxy" \
             .github/scripts/tier2-smoke.sh
+      # As compose: history for a held stack, full for one nobody holds.
+      - name: workflows — runs walk on Temporal, each phase child on its family queue
+        timeout-minutes: 10
+        env:
+          UI_URL: http://localhost
+          TEMPORAL: kubectl -n ${{ env.NS }} exec deploy/temporal -- temporal
+          SCOPE: ${{ env.EXPOSE == 'true' && 'history' || 'full' }}
+        run: .github/scripts/preview-workflows.sh
 
-      # oidc: after the smoke, which needs dev sessions. provision.mjs runs in
-      # the real-core image on the runner's Docker, so it is pulled there too.
+      # oidc: after the smoke and the workflows, which need dev sessions.
+      # provision.mjs runs in the real-core image on the runner's Docker, so
+      # it is pulled there too.
       - name: "oidc: provision Zitadel (the world's users)"
         if: env.OIDC == 'true'
         timeout-minutes: 10
@@ -641,6 +663,7 @@ jobs:
             core-queues.json
             session.json
             shell.html
+            workflows.log
       - name: tear down the tunnel (and Zitadel)
         if: always()
         env:

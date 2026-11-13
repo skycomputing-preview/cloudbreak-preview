@@ -6,7 +6,10 @@ Preview builds of CloudBreak for collaborators. The `preview` workflow
 1. Boots the published CloudBreak images two ways: `docker compose` and the
    Helm chart on k3s. The images come from the private
    `ghcr.io/united-clouds/cloudbreak` packages.
-2. Smoke-tests each stack (`.github/scripts/tier2-smoke.sh`).
+2. Smoke-tests each stack (`.github/scripts/tier2-smoke.sh`), then runs
+   real CloudBreak workflows on it and checks them on Temporal
+   (`.github/scripts/preview-workflows.sh`, see
+   [Workflow runs](#workflow-runs)).
 3. Keeps each stack up for a while behind a Cloudflare Tunnel, so
    collaborators can try the UI, then tears it down.
 
@@ -21,15 +24,41 @@ Actions → **preview** → Run workflow:
 |---|---|---|
 | `tag` | `main` | Which image build: `main` (the newest merge), `sha-<commit>`, `pr-<n>`, a dispatch tag or a release. |
 | `target` | `both` | `compose`, `k3s` or `both`. |
-| `hold_minutes` | `60` | How long each stack stays up for collaborators after its smoke passes. `0` = smoke only; max `300`. |
+| `hold_minutes` | `60` | How long each stack stays up for collaborators after its checks pass. `0` = checks only, with every [workflow run](#workflow-runs); max `300`. |
 | `auth` | `dev` | How collaborators sign in: `dev` (pick a persona) or `oidc` (a real Zitadel login). See [Signing in](#signing-in). |
 
 - **Ending early:** cancel the run. Teardown still runs.
 - **Starting another run:** a new run of a job cancels the one holding that
   job's tunnel, so there is only ever one stack per tunnel. The nightly run
   does the same to a preview that is still up.
-- **When the preview is live:** once the smoke passes, the job summary says
-  which preview is up.
+- **When the preview is live:** once the smoke and the workflow runs pass,
+  the job summary says which preview is up.
+
+## Workflow runs
+
+The smoke shows that every hop answers. After it, each job starts real
+CloudBreak runs through the gateway as the dev personas and approves or
+rejects their gates. Then it asks Temporal about each run. The run's own
+workflow must have closed, and each phase child the stub worker served must
+have completed on its family queue. The job summary lists every workflow
+checked.
+
+| Run | Queue: phase children | Runs when |
+|---|---|---|
+| S5: TCO comparison of `retail-loyalty` | `cb-tco`: compare | always |
+| S6: `retail-loyalty` → Azure EU, rejected at provision review | `cb-migration`: plan, provision, rollback | always |
+| S6: `retail-loyalty` → Azure EU, every gate approved | `cb-migration`: plan, provision, cutover | the stack is not held |
+| S1: assessment of Checkout | `cb-assessment`: assess | the stack is not held |
+| S2: an HA cluster on Azure EU | `cb-cluster-lifecycle`: create | the stack is not held |
+
+- **A stack held for collaborators** gets only the first two runs. They
+  leave the world as seeded and add only history to `retail-loyalty`, a
+  group no walkthrough arc uses: one TCO comparison, one aborted migration
+  with its report, and their settled gate cards.
+- **A stack nobody holds** (`hold_minutes: 0`, or no tunnel for it) gets all
+  five. Together they cover every phase child type the stub worker serves.
+  The last three would change what collaborators see: the group moves, the
+  assessment demo target gets a score, and Azure EU gets a second cluster.
 
 ## Secrets and variables
 
@@ -177,5 +206,6 @@ scripts/sync-from-cloudbreak.sh ../cloudbreak <ref>      # or a branch, tag or c
 ```
 
 The workflow itself is a port of that repo's `.github/workflows/smoke.yml`,
-with the tunnel and hold steps added. Its S6 demo-arc step needs the
-CloudBreak source, so it stays there.
+with the tunnel, hold and workflow-run steps added. Its S6 demo-arc step (a
+browser rehearsal of the walkthrough) needs the CloudBreak source, so it
+stays there. The workflow runs drive the same flows over the API instead.
