@@ -5,7 +5,7 @@ images:
   # The CloudBreak images .github/workflows/images.yml publishes:
   # <registry>/{real-core,bff,stub-worker,frontend}:<tag>. Tags as in
   # deploy/README.md: main, sha-<commit>, pr-<n>, a dispatch tag, a release.
-  registry: ghcr.io/united-clouds/cloudbreak
+  registry: ghcr.io/sky-compute/cloudbreak
   tag: main
   # Empty = Always for `main` (it moves on every merge, so a cached copy is a
   # stale build — compose's `--pull always` lesson), IfNotPresent otherwise.

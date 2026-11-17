@@ -15,7 +15,7 @@
 # Knobs (all optional except CB_CORE_SECRET):
 #   CB_IMAGE_TAG       which build to run: main (default), sha-<commit>, pr-<n>, a dispatch
 #                      tag (dev-<timestamp> or a typed one), or a release tag
-#   CB_IMAGE_REGISTRY  default ghcr.io/united-clouds/cloudbreak
+#   CB_IMAGE_REGISTRY  default ghcr.io/sky-compute/cloudbreak
 #   CB_UI_PORT         host port for the gateway (the SPA's origin), default 5173
 #   STUB_STEP_MS       the stub worker's pacing, default 250
 #
@@ -30,7 +30,7 @@
 # here (`down` keeps the world, `down -v` resets it) and publishes no host port.
 
 x-cb-images:
-  real-core: &real-core-image ${CB_IMAGE_REGISTRY:-ghcr.io/united-clouds/cloudbreak}/real-core:${CB_IMAGE_TAG:-main}
+  real-core: &real-core-image ${CB_IMAGE_REGISTRY:-ghcr.io/sky-compute/cloudbreak}/real-core:${CB_IMAGE_TAG:-main}
 
 x-core-env: &core-env
   # The BFF-core bearer secret: the SAME value on both, at least 32 bytes.
@@ -130,7 +130,7 @@ services:
   # `cb:up --tier 2` runs by default. TEMPORAL_TASK_QUEUE(S) is left unset on
   # purpose: unset means all four.
   stub-worker:
-    image: ${CB_IMAGE_REGISTRY:-ghcr.io/united-clouds/cloudbreak}/stub-worker:${CB_IMAGE_TAG:-main}
+    image: ${CB_IMAGE_REGISTRY:-ghcr.io/sky-compute/cloudbreak}/stub-worker:${CB_IMAGE_TAG:-main}
     environment:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: default
@@ -167,7 +167,7 @@ services:
     restart: unless-stopped
 
   bff:
-    image: ${CB_IMAGE_REGISTRY:-ghcr.io/united-clouds/cloudbreak}/bff:${CB_IMAGE_TAG:-main}
+    image: ${CB_IMAGE_REGISTRY:-ghcr.io/sky-compute/cloudbreak}/bff:${CB_IMAGE_TAG:-main}
     environment:
       <<: *core-env
       PORT: "8080"
@@ -186,7 +186,7 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: ${CB_IMAGE_REGISTRY:-ghcr.io/united-clouds/cloudbreak}/frontend:${CB_IMAGE_TAG:-main}
+    image: ${CB_IMAGE_REGISTRY:-ghcr.io/sky-compute/cloudbreak}/frontend:${CB_IMAGE_TAG:-main}
     environment:
       BFF_ADDR: http://bff:8080
     depends_on:

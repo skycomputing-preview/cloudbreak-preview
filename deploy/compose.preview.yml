@@ -1,5 +1,5 @@
 # Preview-only override for the vendored deploy/compose.tier2.yml (which
-# stays byte-identical to united-clouds/cloudbreak): publish every port on
+# stays byte-identical to sky-compute/cloudbreak): publish every port on
 # loopback only.
 #
 # The stack runs dev-session auth (AUTH_MODE=dev: `x-dev-user: sysadmin` is a
