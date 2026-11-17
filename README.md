@@ -5,7 +5,7 @@ Preview builds of CloudBreak for collaborators. The `preview` workflow
 
 1. Boots the published CloudBreak images two ways: `docker compose` and the
    Helm chart on k3s. The images come from the private
-   `ghcr.io/united-clouds/cloudbreak` packages.
+   `ghcr.io/sky-compute/cloudbreak` packages.
 2. Smoke-tests each stack (`.github/scripts/tier2-smoke.sh`), then runs
    real CloudBreak workflows on it and checks them on Temporal
    (`.github/scripts/preview-workflows.sh`, see
@@ -83,7 +83,7 @@ assessment doesn't change that.
 | `CB_PREVIEW_ADMIN_PASSWORD` | secret | `auth: oidc`, optional. When set, Zitadel gets a console admin, `zitadel-admin@acme.example` (ORG_OWNER of `acme`), with this password. Give it only to maintainers who manage Zitadel accounts. It must differ from `CB_PREVIEW_OIDC_PASSWORD`, and the same policy applies. |
 | `CB_PREVIEW_HOLD_MINUTES` | variable | Optional. Hold time for the nightly run (default 60). |
 | `CB_PREVIEW_AUTH` | variable | Optional. Sign-in mode for the nightly run: `dev` (default) or `oidc`. |
-| `CB_IMAGE_REGISTRY` | variable | Optional. Default `ghcr.io/united-clouds/cloudbreak`. |
+| `CB_IMAGE_REGISTRY` | variable | Optional. Default `ghcr.io/sky-compute/cloudbreak`. |
 | `CB_PREVIEW_PKG_USER` | variable | Optional. Registry username sent with the token (default: this repo's owner; GHCR identifies the caller by the token). |
 
 If a stack's token or URL is missing, that stack still gets smoke-tested but
@@ -136,7 +136,7 @@ on `auth`:
 - **`dev` (default).** The stack runs CloudBreak's dev sessions
   (`AUTH_MODE=dev`): any persona, no password. That is why Access is
   required. Pick a persona from the menu on the role chip, top right
-  (united-clouds/cloudbreak#160). On images older than that, the chip is a
+  (sky-compute/cloudbreak#160). On images older than that, the chip is a
   plain label; switch in the browser console instead with
   `localStorage.setItem('cb_dev_user', 'supervisor'); location.reload()`.
   The keys are `rd-owner`, `rd-owner-2`, `business-owner`,
@@ -168,7 +168,7 @@ on `auth`:
 
   **Users created in Settings can't sign in on their own.** The Supervisor's
   user management in Settings changes CloudBreak's user records only, not
-  Zitadel (united-clouds/cloudbreak#162). A user created there has no
+  Zitadel (sky-compute/cloudbreak#162). A user created there has no
   Zitadel account, and a user whose role changed there is refused until
   Zitadel's role grant matches. To test that flow end to end, set
   `CB_PREVIEW_ADMIN_PASSWORD`. Then sign in to the Zitadel console (the auth
@@ -190,7 +190,7 @@ Workflow logs and artifacts here are public:
 
 ## Vendored files
 
-These files are copied byte for byte from the private `united-clouds/cloudbreak`
+These files are copied byte for byte from the private `sky-compute/cloudbreak`
 repo. Preview-only changes go in separate files, which the sync leaves
 alone: `deploy/compose.preview.yml`, `deploy/compose.preview.oidc.yml`,
 `deploy/zitadel.preview.yml` and `.github/scripts/zitadel-preview.mjs`

@@ -1,4 +1,4 @@
-# Smoke the PUBLISHED CloudBreak images (ghcr.io/united-clouds/cloudbreak,
+# Smoke the PUBLISHED CloudBreak images (ghcr.io/sky-compute/cloudbreak,
 # private) the two ways an operator runs them, then keep each stack up behind
 # a Cloudflare Tunnel so collaborators can try the UI:
 #
@@ -14,7 +14,7 @@
 # expose an open URL), holds the stack for `hold_minutes` (default 60), then
 # tears everything down. Cancel the run to end a preview early.
 #
-# Ported from united-clouds/cloudbreak's .github/workflows/smoke.yml; the
+# Ported from sky-compute/cloudbreak's .github/workflows/smoke.yml; the
 # deploy files are vendored from there (README.md: "Vendored files"). The S6
 # demo arcs need that repo's source and stay there.
 #
@@ -58,7 +58,7 @@ permissions:
   contents: read
 
 env:
-  CB_IMAGE_REGISTRY: ${{ vars.CB_IMAGE_REGISTRY || 'ghcr.io/united-clouds/cloudbreak' }}
+  CB_IMAGE_REGISTRY: ${{ vars.CB_IMAGE_REGISTRY || 'ghcr.io/sky-compute/cloudbreak' }}
   CB_IMAGE_TAG: ${{ inputs.tag || 'main' }}
   CLOUDFLARED_IMAGE: cloudflare/cloudflared:2026.10.0
 

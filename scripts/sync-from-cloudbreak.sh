@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Refresh the vendored deploy files from a checkout of the private
-# united-clouds/cloudbreak repo, and record the commit they came from in
+# sky-compute/cloudbreak repo, and record the commit they came from in
 # deploy/SOURCE.
 #
 #   scripts/sync-from-cloudbreak.sh <path-to-cloudbreak-checkout> [ref]   # ref: origin/main
@@ -9,7 +9,7 @@
 # Review the diff, then commit it together with any workflow change it needs.
 set -euo pipefail
 
-src=${1:?path to a united-clouds/cloudbreak checkout}
+src=${1:?path to a sky-compute/cloudbreak checkout}
 ref=${2:-origin/main}
 here=$(cd "$(dirname "$0")/.." && pwd)
 
@@ -27,6 +27,6 @@ git -C "$src" fetch --quiet origin
 sha=$(git -C "$src" rev-parse "$ref")
 rm -rf "$here/deploy/chart/templates"
 git -C "$src" archive "$sha" "${paths[@]}" | tar -x -C "$here"
-echo "united-clouds/cloudbreak@$sha" > "$here/deploy/SOURCE"
-echo "synced from united-clouds/cloudbreak@$sha"
+echo "sky-compute/cloudbreak@$sha" > "$here/deploy/SOURCE"
+echo "synced from sky-compute/cloudbreak@$sha"
 git -C "$here" status --short

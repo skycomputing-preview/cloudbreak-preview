@@ -27,7 +27,7 @@
 # aws-eu/standard, with one TCO comparison, one aborted and two completed
 # migrations (each with its report and settled gate cards); Checkout carrying
 # an assessment; azure-eu with a second (HA) cluster. retail-loyalty ends back
-# on aws-eu because Arc 3 of the demo arcs (united-clouds/cloudbreak
+# on aws-eu because Arc 3 of the demo arcs (sky-compute/cloudbreak
 # integration/e2e/demo-arcs.spec.ts) starts it there. Checkout appears only in
 # the arc-entry refusal beats (their own test, before Arc 1), which depend on
 # it not being on CloudBreak; an assessment doesn't change that.
